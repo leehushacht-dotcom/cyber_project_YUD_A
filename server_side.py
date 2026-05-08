@@ -112,19 +112,20 @@ STATE_HANDSHAKE = 0
 STATE_AUTH = 1
 STATE_LOBBY = 2
 STATE_GAME = 3
-STATE_WAIT = 4
 
 ALLOWED_COMMANDS = {
     STATE_HANDSHAKE: ["KEY"],
     STATE_AUTH: ["LOGIN", "SIGNUP", "TOKEN_LOGIN"],
-    STATE_LOBBY: ["COLOR", "BUY", "LOGOUT"],
-    STATE_GAME: ["DIR", "LEAVE_GAME"]
+    STATE_LOBBY: ["COLOR", "BUY", "LOGOUT", "LEAVE_GAME"],
+    STATE_GAME: ["DIR", "LEAVE_GAME", "SYNC_ME"]
 }
 
 ALLOWED_UDP = {
     STATE_LOBBY: ["INIT"],
     STATE_GAME: ["DIR", "INIT"]
 }
+
+BOTS_NAMES = ["bob", "david", "rahel", "vladimir", "yona"]
 
 ERROR_DICT = {
     "003": "login failed",
@@ -138,6 +139,7 @@ ERROR_DICT = {
 class BotClient:
     def __init__(self, bot_id):
         self.tid = bot_id
+        self.username = BOTS_NAMES.pop(0)
 
 
 class HandleClientUDP(threading.Thread):
@@ -386,10 +388,11 @@ class Client(threading.Thread):
         self.tid = tid
         self.username = None
         # self.password = None
+        self.sync_me = False
         self.snake_color = None
         self.cmd_dict = {"COLOR": self.color_f, "KEY": self.key_f, "SIGNUP": self.signup_f,
                          "LOGIN": self.login_f, "BUY": self.buy_f, "TOKEN_LOGIN": self.token_login_f,
-                         "LOGOUT": self.logout_f}
+                         "LOGOUT": self.logout_f, "LEAVE_GAME": self.leave_game_f, "SYNC_ME": self.sync_me_f}
 
     def run(self):
         self.sock.settimeout(0.1)
@@ -612,7 +615,7 @@ class Client(threading.Thread):
         if values:
             self.state = STATE_GAME
             self.server.async_msg.player_ready_for_game(int(self.tid))
-            self.server.UDP_async_msg.player_ready_for_game(int(self.tid))
+            self.server.UDP_async_msg.player_ready_for_game(str(self.tid))
         print("CLASS: client | PROC:send_new_board_f | info: send NEW_BOARD!")
     # --------------------------------------------------------------------------------------------------------------
 
@@ -630,6 +633,16 @@ class Client(threading.Thread):
             self.state = STATE_AUTH
             self.transport_data.key = key_got
             self.server.async_msg.put_msg_by_user(self.build_message("ID", tid=str(self.tid)), int(self.tid))
+
+    def leave_game_f(self, payload):
+        print(f"Player {self.tid} finished death animation. Moving to LOBBY.")
+        self.state = STATE_LOBBY
+        self.server.async_msg.not_ready(int(self.tid))
+        self.server.UDP_async_msg.not_ready(str(self.tid))
+
+    def sync_me_f(self, payload):
+        if self.state == STATE_GAME:
+            self.sync_me = True
 
     def start_board_f(self, payload):
         # new player ask for board (future use maybe)
@@ -743,6 +756,8 @@ class Server:
         next_sync_tick = 100
         INTERVAL = 100
         send_tcp = False
+        udp_history = {}
+        HISTORY_MAX_SIZE = 5
 
         for i in range(5):
             bot = BotClient(-1 * (i + 1))
@@ -755,6 +770,9 @@ class Server:
                 #print(self.async_msg.ready_for_game, "---------------------")
                 self.players_manager.move_all_players(tick_id)  # lock in the file
                 delta = self.players_manager.get_world_delta()  # lock in the file
+                udp_history[str(tick_id)] = delta.copy()
+                if tick_id > HISTORY_MAX_SIZE:
+                    udp_history.pop(str(tick_id - HISTORY_MAX_SIZE), None)
 
                 if self.forced_full_sync or tick_id >= next_sync_tick:  # prepare for tcp send (update board for all)
                     sync = self.players_manager.get_full_sync()  # lock in the file
@@ -767,6 +785,21 @@ class Server:
                         send_tcp = True
                     next_sync_tick = tick_id + INTERVAL
                     self.forced_full_sync = False
+                # -------------------------------------------------
+                else:
+                    # players who asked for personal sync
+                    need_sync_players = [c for c in self.client_obj_lst if c.sync_me]
+                    if need_sync_players:
+                        sync = self.players_manager.get_full_sync()
+                        personal_tcp_delta = delta.copy()
+                        personal_tcp_delta["full_grid"] = sync["full_grid"]
+                        personal_tcp_delta.pop("remove", None)
+                        personal_tcp_delta.pop("add", None)
+                        personal_msg = self.build_message("BOARD", delta=personal_tcp_delta, ID=tick_id)
+                        for cli in need_sync_players:
+                            self.async_msg.put_msg_by_user(personal_msg, int(cli.tid))
+                            cli.sync_me = False
+                # --------------------------------------------------
                 if delta.get("died"):
                     self.send_broadcast_death(delta["died"])
                     for p_id_str in delta["died"]:
@@ -784,12 +817,14 @@ class Server:
                             self.send_update_coins(p_id_str, total_money)
                             #  coins add
                             dead_client.state = STATE_LOBBY
+                            #self.async_msg.not_ready(int(p_id_str))
+                            #self.UDP_async_msg.not_ready(str(p_id_str))
                             self.players_manager.remove_player(dead_client)
                             dead_client.snake_color = None
                             if p_id_str in self.handle_client_udp_obj.tid_to_ID:
                                 self.handle_client_udp_obj.tid_to_ID[p_id_str] = -1
                             print(f"Server updated state for dead player {p_id_str} back to LOBBY")
-                udp_board_msg = self.build_message("BOARD", delta=delta, ID=tick_id)
+                udp_board_msg = self.build_message("BOARD", delta=delta, ID=tick_id, history=udp_history)
                 self.UDP_async_msg.put_msg_to_all(udp_board_msg)
                 if send_tcp:
                     self.async_msg.put_msg_to_all(tcp_board_msg)

@@ -59,6 +59,13 @@ class SpatialGrid:
                 del self.grid[cell]
 
     def get_point_value(self, x, y, hardcore=False):
+        safe_radius = 2 if hardcore else 0
+        for dx in range(-safe_radius, safe_radius + 1):
+            for dy in range(-safe_radius, safe_radius + 1):
+                check_x, check_y = x + dx, y + dy  # point in the radius we want
+                if (check_x, check_y) in self.wall or (check_x, check_y) in self.water:
+                    return 0
+
         points = self.nearby_points_c(x, y)
         value = 10000
         for point in points:
@@ -68,11 +75,11 @@ class SpatialGrid:
                 distance = abs(x - point[0]) + abs(y - point[1])
                 if distance < value:
                     value = distance
-            elif kind == APPLE:
+            elif kind in (APPLE, COIN):
                 distance = abs(x - point[0]) + abs(y - point[1])
                 if distance == 0:
                     return 0
-                if hardcore:
+                if hardcore and kind == APPLE:
                     if distance < 3:
                         return 0
         return value
@@ -110,6 +117,7 @@ class SpatialGrid:
 class HoldPlayersData:
     def __init__(self):
         self.changed = False
+        self.newest_bot = None
         self.fruits_num = 0
         self.tid_to_obj = {}
         self.player_to_color = {}  # color is list of colors of the snake
@@ -248,7 +256,10 @@ class HoldPlayersData:
                     # רישום הראש בלוח כדי שכולם יראו אותו בפריים הבא
                     self._object_add(pos[0], pos[1], SNAKE_HEAD, cli_obj, 1)
                     if bot:
+                        print("is bot")
                         self.in_game_bots.append(cli_obj)
+                        self.newest_bot = int(cli_obj.tid)
+                        self.tid_to_usernames[str(cli_obj.tid)] = cli_obj.username
                     else:
                         self.tid_to_usernames[str(cli_obj.tid)] = cli_obj.username
                         cli_obj.is_ready = True
@@ -357,7 +368,10 @@ class HoldPlayersData:
                         }
                         self._object_add(pos[0], pos[1], SNAKE_HEAD, player, 1)
                         if bot:
+                            print("is bot")
                             self.in_game_bots.append(player)
+                            self.newest_bot = int(player.tid)
+                            self.tid_to_usernames[str(player.tid)] = player.username
                         else:
                             self.tid_to_usernames[str(player.tid)] = player.username
                             player.is_ready = True
@@ -392,6 +406,7 @@ class HoldPlayersData:
                     "length": {str(snake.tid): data["length"] for snake, data in self.in_game_players.items()},
                     "usernames": self.tid_to_usernames.copy()
                 }
+
                 if new_map:
                     msg["walls"] = list(self.GRID.wall)
                     msg["water"] = list(self.GRID.water)
@@ -513,7 +528,10 @@ class HoldPlayersData:
                 self.changed = True
             # 2ב: אם זה בוט, מכניסים אותו בחזרה בצורה מוגנת!
             if is_bot:
+                snake.tid = self.newest_bot - 1
+                self.newest_bot = int(snake.tid)
                 self.waiting_players.append((snake, True))
+
                 color = [0, 0, 0]
                 color[random.randint(0, 2)] = 255
                 self._set_snake_color(str(snake.tid), [tuple(color)])
@@ -769,7 +787,8 @@ class HoldPlayersData:
                 "remove": list(self.to_remove),
                 "died": list(self.died_snakes),
                 "leaders": self._get_leaders(),
-                "length": {str(snake.tid): data["length"] for snake, data in self.in_game_players.items()}
+                "length": {str(snake.tid): data["length"] for snake, data in self.in_game_players.items()},
+                "usernames": self.tid_to_usernames.copy()
             }
 
             if self.changed:

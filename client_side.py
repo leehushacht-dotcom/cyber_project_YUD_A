@@ -280,6 +280,8 @@ class ClientThread(threading.Thread):
         self.UDP_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.UDP_obj = None
         self.last_board_id = -1
+        self.asking_server_for_sync = False
+        self.pending_udp_updates = []
 
         self.key = get_random_bytes(32)
 
@@ -408,18 +410,152 @@ class ClientThread(threading.Thread):
             died = payload.get("died", [])
             for p_id_str in died:
                 if p_id_str in self.head_history:
+                    print("in HEAD HISTORY")
                     del self.head_history[p_id_str]
                 if p_id_str in self.visual_snakes:
+                    print("in VISUAL SNAKES")
+                    #print(self.visual_snakes[p_id_str])
                     del self.visual_snakes[p_id_str]
 
+            if str(self.tid) in died:
+                self.alive = False
+
+    def board_f(self, payload):
+        with self.lock:
+            tick_id = payload.get("ID", -1)
+            delta = payload.get("delta")
+            is_full_sync = "full_grid" in delta
+            history = payload.get("history", {})
+            # -------------------------------------------------------------
+            # מצב 1: אנחנו מחכים למשאית ה-TCP (הקפאת מסך + אגירה בתור)
+            # -------------------------------------------------------------
+            if self.asking_server_for_sync and not is_full_sync:
+                # שומרים את החבילה בצד ולא מעדכנים את המסך עדיין
+                self.pending_udp_updates.append(payload)
+                return
+            # -------------------------------------------------------------
+            # מצב 2: שגרה - חבילת UDP רגילה מגיעה
+            # -------------------------------------------------------------
+            if not is_full_sync:
+                # 2א. חבילה ישנה שהגיעה באיחור או חבילה כפולה - זורקים
+                if tick_id != -1 and tick_id <= self.last_board_id:
+                    return
+                # 2ב. מניעת קפיצה בהתחלה: אם זה הטיק הראשון שאנחנו מקבלים אי פעם
+                if self.last_board_id == -1:
+                    self.last_board_id = tick_id - 1
+                # 2ג. יש לנו חור! חסרות חבילות
+                if tick_id > self.last_board_id + 1:
+                    print("missing packets")
+                    missing_ticks = tick_id - self.last_board_id - 1
+                    print(missing_ticks)
+                    # נבדוק אם כל הטיקים החסרים נמצאים בהיסטוריה
+                    can_recover = True
+                    for missing_id in range(self.last_board_id + 1, tick_id):
+
+                        if str(missing_id) not in history and missing_id not in history:
+                            can_recover = False
+                            break
+
+                    if can_recover:
+                        # הצלחה! מריצים את ההיסטוריה מהר כדי להשלים את הפער בזיכרון
+                        for missing_id in range(self.last_board_id + 1, tick_id):
+                            # שים לב: msgpack לפעמים הופך מפתחות int ל-str, אז כדאי לתמוך בשניהם
+                            missing_delta = history.get(missing_id) or history.get(str(missing_id))
+                            self.change_graphics(missing_delta.get("remove", []), missing_delta.get("add", []))
+                            self.last_board_id = missing_id
+                    else:
+                        # קריסה: הפער גדול מדי. עוצרים הכל ומזעיקים TCP!
+                        print(f"Packet loss! Expected {self.last_board_id + 1}, got {tick_id}. Requesting SYNC.")
+                        self.asking_server_for_sync = True
+                        self.pending_udp_updates.append(payload)  # שומרים את הנוכחית לתור
+                        self.send_to_server(self.build_message("SYNC_ME"))
+                        return
+
+            # -------------------------------------------------------------
+            # עדכון המזהה האחרון (אם הגענו לפה, הכל מסונכרן)
+            # -------------------------------------------------------------
+            if tick_id != -1:
+                self.last_board_id = tick_id
+
+            # -------------------------------------------------------------
+            # מצב 3: חבילת ה-TCP השלמה הגיעה! (התאוששות)
+            # -------------------------------------------------------------
+            if is_full_sync:
+                print("update with tcp")
+                self.asking_server_for_sync = False
+                # דורסים את הלוח הישן
+                self.grid = {}
+                for point in delta["full_grid"]:
+                    self.grid[(point[0], point[1], point[4])] = (point[2], point[3])
+                if "usernames" in delta:
+                    self.tid_to_username = delta.get("usernames")
+                if tick_id != -1:
+                    self.last_board_id = tick_id
+                if self.pending_udp_updates:
+                    # מיון התור לפי ID כדי לוודא סדר כרונולוגי
+                    self.pending_udp_updates.sort(key=lambda x: x.get("ID", -1))
+                    print(f"Applying {len(self.pending_udp_updates)} pending updates...")
+                    # ריקון התור בשיטת "כל הקודם זוכה"
+                    while self.pending_udp_updates:
+                        next_update = self.pending_udp_updates.pop(0)
+                        p_id = next_update.get("ID", -1)
+                        # מעבדים רק הודעות שחדשות יותר ממה שקיבלנו ב-TCP
+                        if p_id > self.last_board_id:
+                            p_delta = next_update.get("delta", {})
+                            self.change_graphics(p_delta.get("remove", []), p_delta.get("add", []))
+                            self.last_board_id = p_id
+                    print(f"Fast-forward complete. New last_board_id: {self.last_board_id}")
+
+                """
+                # עכשיו מריצים את כל מה שהצטבר בתור בזמן שחיכינו (Fast Forward)
+                if len(self.pending_udp_updates) > 0:
+                    self.pending_udp_updates.sort(key=lambda x: x.get("ID", -1))
+                    updates_to_process = self.pending_udp_updates.copy()
+                    self.pending_udp_updates.clear()
+                    for pending_payload in updates_to_process:
+                        if pending_payload.get("ID", -1) > self.last_board_id:
+                            while self.pending_udp_updates:
+                                next_update = self.pending_udp_updates.pop(0)
+                                if next_update.get("ID", -1) > self.last_board_id:
+                                    delta = next_update.get("delta", {})
+                                    self.change_graphics(delta.get("remove", []), delta.get("add", []))
+                                    self.last_board_id = next_update.get("ID")
+
+
+                          #  self.board_f(pending_payload)  # recursive call with new udp msg
+                """
+            else:
+                if "usernames" in delta:
+                    self.tid_to_username = delta.get("usernames")
+                # פעולה רגילה - עדכון דלתא
+                self.change_graphics(delta.get("remove", []), delta.get("add", []))
+            # -------------------------------------------------------------
+            # סיום: עדכון נתוני משחק כלליים
+            # -------------------------------------------------------------
+            if "length" in delta:
+                self.snake_lengths = delta.get("length")
+            if "players_color" in delta:
+                self.tid_to_color = delta.get("players_color")
+            self.leaders = delta.get("leaders")
+            self.rebuild_optimized_data()
+    """
     def board_f(self, payload):
         with self.lock:
             tick_id = payload.get("ID", -1)
             #print(f"DEBUG: Got board with ID {tick_id}. My last_board_id is {self.last_board_id}")  # <--- הוסף את זה!
             delta = payload.get("delta")
             is_full_sync = "full_grid" in delta
+            history = payload.get("history", {})
             if not is_full_sync:
                 if tick_id != -1 and tick_id <= self.last_board_id:
+                    return
+                if self.last_board_id != -1 and tick_id > self.last_board_id + 1:
+                    if not self.asking_server_for_sync:
+                        print(f"Packet loss! Expected {self.last_board_id + 1}, got {tick_id}. Requesting SYNC.")
+                        self.asking_server_for_sync = True  # נועלים את הדלת (מונע ספאם)
+                        self.send_to_server(self.build_message("SYNC_ME"))
+                    else:
+                        print("asking for sync!!!!!!!!!!!!!!!")
                     return
             else:
                 print("tcp packet")
@@ -431,6 +567,7 @@ class ClientThread(threading.Thread):
                 self.last_board_id = tick_id
             if is_full_sync:
                 print("update with tcp")
+                self.asking_server_for_sync = False
                 self.grid = {}
                 for point in delta["full_grid"]:
                     self.grid[(point[0], point[1], point[4])] = (point[2], point[3])
@@ -443,21 +580,22 @@ class ClientThread(threading.Thread):
                     #  self.state = STATE_GAME
             else:
                 self.change_graphics(delta.get("remove", []), delta.get("add", []))
-            died = delta.get("died", [])
-            for p_id_str in died:
-                if p_id_str in self.head_history:
-                    del self.head_history[p_id_str]
-                if p_id_str in self.visual_snakes:
-                    del self.visual_snakes[p_id_str]
+            #died = delta.get("died", [])
+            #for p_id_str in died:
+            #    if p_id_str in self.head_history:
+            #        del self.head_history[p_id_str]
+            #    if p_id_str in self.visual_snakes:
+            #        del self.visual_snakes[p_id_str]
             if "length" in delta:
                 self.snake_lengths = delta.get("length")
-            if str(self.tid) in died:
-                self.alive = False
+            #if str(self.tid) in died:
+            #    self.alive = False
             if "players_color" in delta:
                 self.tid_to_color = delta.get("players_color")
             self.leaders = delta.get("leaders")
             # הקסם שמתקן הכל
             self.rebuild_optimized_data()
+    """
 
     def pub_key_get_f(self, payload):
         public_key = payload.get("key")
@@ -522,6 +660,12 @@ class ClientThread(threading.Thread):
             self.grid = {}
             #self.UDP_port = payload.get("UDPport")
             sync = payload.get("sync")
+            # --- שמונע את הקפיצה בהתחלה ---
+            if "ID" in payload:
+                self.last_board_id = payload.get("ID")
+            elif "ID" in sync:
+                self.last_board_id = sync.get("ID")
+            # ----------------------------
             self.board_width, self.board_height = sync.get("board_size")
             self.tid_to_color = sync.get("players_color")
             if "walls" in sync:  # also water
@@ -596,7 +740,7 @@ class ClientThread(threading.Thread):
 
     def prepare_for_new_game(self):
         self.state = STATE_LOBBY
-        # self.last_board_id = -1
+        self.last_board_id = -1
         self.boosting = False
         self.last_direction = None
         self.color = None
@@ -785,6 +929,8 @@ def create_coin_surface(block_size):
 
 
 def draw_leaderboard(screen, leaders, tid_to_color, my_tid, snake_lengths, tid_to_username):
+    print(tid_to_username)
+    print(">>>>>>>>>>>>>>>")
     if not leaders:
         return
     start_x = screen.get_width() - 170
@@ -1243,6 +1389,7 @@ def cli_game_loop(cli_obj):
         screen.blit(fade_surface, (0, 0))
         pygame.display.flip()
         clock.tick(60)
+    cli_obj.send_to_server(cli_obj.build_message("LEAVE_GAME"))
 
 
 def draw_premium_button(screen, text_surface, rect, base_color, hover_color, mouse_pos):
@@ -2074,6 +2221,10 @@ def main():
         # הפונקציה הזו תרוץ בלולאה עד שהמשתמש יצליח להתחבר
         if not login_done:
             if not unified_auth_screen(screen, client_obj):
+                client_obj.running = False
+                client_obj.close()
+                client_obj.join()  # מחכה שהתהליך באמת ימות
+                pygame.quit()
                 break
         try:
             while client_obj.is_alive():
