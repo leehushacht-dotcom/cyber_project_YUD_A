@@ -483,9 +483,11 @@ class Client(threading.Thread):
         self.server.async_msg.put_msg_by_user(msg, int(self.tid))
 
     def logout_f(self, payload):
-        if self.username:
-            print(f"[Logout] User {self.username} is logging out.")
-            self.server.user_manager.logout_user(self.username)
+        remember_me = payload.get("remember", False)
+        if not remember_me:
+            if self.username:
+                print(f"[Logout] User {self.username} is logging out.")
+                self.server.user_manager.logout_user(self.username)
         # ה-handle_client_udp_obj כבר יודע למחוק לפי ה-TID
         self.server.handle_client_udp_obj.remove_client(self.tid)
         # 3. הסרת המשתמש מרשימת השחקנים הפעילים בלוח
@@ -493,7 +495,6 @@ class Client(threading.Thread):
         # 4. ניקוי תור ההודעות (כדי שלא יישלחו הודעות זבל לסוקט שנסגר)
         self.server.async_msg.not_ready(int(self.tid))
         self.server.UDP_async_msg.not_ready(str(self.tid))
-
         self.username = None
         self.close()
 

@@ -92,7 +92,7 @@ class UserManager:
                 print("update all token thing")
                 self.users[username]["token"] = new_token
                 self.users[username]["device_id"] = device_id
-                # self._save_users_private()
+                self._save_users_private()
 
     def check_auto_login(self, username, token, device_id):
         with self.lock:
@@ -142,6 +142,7 @@ class UserManager:
         with self.lock:
             if username in self.users:
                 self.users[username]["coins"] -= coins
+                self._save_users_private()
 
     def get_coins(self, user):
         with self.lock:
@@ -152,6 +153,7 @@ class UserManager:
         with self.lock:
             if username in self.users:
                 self.users[username]["color_collection"].append(color)
+                self._save_users_private()
 
     def update_best_score(self, username, best_score):
         with self.lock:

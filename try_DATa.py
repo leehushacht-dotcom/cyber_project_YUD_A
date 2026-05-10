@@ -260,6 +260,7 @@ class HoldPlayersData:
                         self.in_game_bots.append(cli_obj)
                         self.newest_bot = int(cli_obj.tid)
                         self.tid_to_usernames[str(cli_obj.tid)] = cli_obj.username
+                        self.changed = True
                     else:
                         self.tid_to_usernames[str(cli_obj.tid)] = cli_obj.username
                         cli_obj.is_ready = True
@@ -372,6 +373,8 @@ class HoldPlayersData:
                             self.in_game_bots.append(player)
                             self.newest_bot = int(player.tid)
                             self.tid_to_usernames[str(player.tid)] = player.username
+                            self.changed = True
+
                         else:
                             self.tid_to_usernames[str(player.tid)] = player.username
                             player.is_ready = True
@@ -523,6 +526,7 @@ class HoldPlayersData:
         with self.users_lock:
             # 2א: מחיקה מילונית עם Casting ל-String
             self.tid_to_obj.pop(str(snake.tid), None)
+            self.tid_to_usernames.pop(str(snake.tid), None)
             if str(snake.tid) in self.player_to_color:
                 del self.player_to_color[str(snake.tid)]
                 self.changed = True
@@ -536,34 +540,7 @@ class HoldPlayersData:
                 color[random.randint(0, 2)] = 255
                 self._set_snake_color(str(snake.tid), [tuple(color)])
                 self.changed = True
-    """
-    def _snake_died(self, snake): 
-        self.tid_to_obj.pop(snake.tid, None)
-        with self.users_lock:
-            if str(snake.tid) in self.player_to_color:
-                del self.player_to_color[str(snake.tid)]
-                self.changed = True
-        body = self.in_game_players[snake]["body"]
-        count = 1
-        for x_y in body:
-            if count != 1:
-                self._object_remove(x_y[0], x_y[1], SNAKE_BODY, snake, x_y[2])
-            else:
-                self._object_remove(x_y[0], x_y[1], SNAKE_HEAD, snake, x_y[2])
-            if True:  # random.random() > 0.25 and count % 3 == 0: # True for now to detect problems
-                val = self.create_better_fruit_value()
-                self._spawn_apple(x_y[0], x_y[1], 3)
-            count += 1
-        self.in_game_players.pop(snake, None)
-        self.died_snakes.append(str(snake.tid))
-        if snake in self.in_game_bots:
-            self.in_game_bots.remove(snake)
-            self.waiting_players.append((snake, True))
-            color = [0, 0, 0]
-            color[random.randint(0, 2)] = 255
-            self._set_snake_color(str(snake.tid), [tuple(color)])
-            self.changed = True
-    """
+
     def _is_snake_ate_check(self, x_y):  # game_lock needed when calling
         cx, cy = self.GRID.get_cell(x_y[0], x_y[1])
         points = self.GRID.get_points_in_cell((cx, cy))
@@ -692,84 +669,7 @@ class HoldPlayersData:
                 if not found_path:
                     if default:
                         self.in_game_players[bot]["dir"] = default
-    """
-    def update_bots(self, tick_id):
-        options_dict = {"U": ("R", "L", "U"), "D": ("R", "L", "D"), "R": ("U", "D", "R"), "L": ("U", "D", "L")}
-        directions = ["U", "D", "L", "R"]
-        g_score = {}
-        with self.game_lock:
-            for i, bot in enumerate(self.in_game_bots):
-                if (tick_id + i) % 2 != 0:  # separate the work --> less work
-                    continue
-                if bot not in self.in_game_players:
-                    continue
 
-        if tick_id % 2 == 0:  # maybe every bot calculate in different tick
-            with self.game_lock:
-                for bot in self.in_game_bots:
-                    if bot not in self.in_game_players:
-                        print("bot not in game")
-                        continue
-                    last_dir = self.in_game_players[bot]["dir"]
-                    options = options_dict[last_dir]
-                    # for now random movement, later smarter even A star
-                    # self.in_game_players[bot]["dir"] = options[random.randint(0, 2)]
-                    head = tuple(self.in_game_players[bot]["body"][0])
-                    apple_xy = self.get_closest_apple(head[0], head[1])
-                    if not apple_xy:
-                        continue
-                    g_score[head] = 0
-                    open_list = [(head, self.f_calculation(head, apple_xy, 0))]
-                    final_way = {}
-                    dept = 0
-                    found_path = False
-                    default = None
-                    if tick_id % 2 == 0:
-                        while open_list and dept < 80:
-                            dept += 1
-                            min_item = min(open_list, key=lambda x: x[1])
-                            curr_head = min_item[0]
-                            if curr_head == apple_xy:
-                                found_path = True
-                                node = apple_xy
-                                first_dir = None
-                                while node in final_way:
-                                    parent_node, dir_taken = final_way[node]
-                                    first_dir = dir_taken  # בסוף הלולאה זה יהיה הצעד הראשון!
-                                    node = parent_node
-                                if first_dir:
-                                    if opposites[self.in_game_players[bot]["dir"]] != first_dir:
-                                        self.in_game_players[bot]["dir"] = first_dir
-                                break
-                            for item in directions:
-                                new_x = curr_head[0] + self.directions_map[item][0]
-                                new_y = curr_head[1] + self.directions_map[item][1]
-                                if dept == 1:
-                                    if item not in options:
-                                        continue
-                                    else:
-                                        # default
-                                        if self.GRID.is_exact_cell_free_from_snakes(new_x, new_y):
-                                            default = item
-                                if not (0 <= new_x < BOARD_WIDTH and 0 <= new_y < BOARD_HEIGHT):
-                                    continue
-                                if not self.GRID.is_exact_cell_free_from_snakes(new_x, new_y) and (new_x, new_y) != apple_xy:
-                                    continue
-                                g = g_score[curr_head] + 1
-                                f_calc = self.f_calculation((new_x, new_y), apple_xy, g)
-                                if (new_x, new_y) not in g_score.keys():
-                                    g_score[(new_x, new_y)] = g
-                                    open_list.append(((new_x, new_y), f_calc))
-                                    final_way[(new_x, new_y)] = (curr_head, item)
-                                elif (new_x, new_y) in g_score.keys() and (g_score[curr_head] + 1) < g_score[(new_x, new_y)]:
-                                    g_score[(new_x, new_y)] = g_score[curr_head] + 1
-                                    open_list.append(((new_x, new_y), f_calc))
-                                    final_way[(new_x, new_y)] = (curr_head, item)
-                            open_list.remove(min_item)
-                        if not found_path:
-                            if default:
-                                self.in_game_players[bot]["dir"] = default
-    """
     def pop_player_coins(self, cli_obj):
         """
         השרת קורא לפעולה הזו כששחקן מת.
@@ -787,12 +687,12 @@ class HoldPlayersData:
                 "remove": list(self.to_remove),
                 "died": list(self.died_snakes),
                 "leaders": self._get_leaders(),
-                "length": {str(snake.tid): data["length"] for snake, data in self.in_game_players.items()},
-                "usernames": self.tid_to_usernames.copy()
+                "length": {str(snake.tid): data["length"] for snake, data in self.in_game_players.items()}
             }
 
             if self.changed:
                 with self.users_lock:
+                    delta["usernames"] = self.tid_to_usernames.copy()
                     delta["players_color"] = self.player_to_color.copy()
                 self.changed = False
 

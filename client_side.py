@@ -713,7 +713,15 @@ class ClientThread(threading.Thread):
             self.game_shop = payload.get("shop")
             self.items_i_own = payload.get("own")
             if "token" in payload and "user" in payload:
-                save_settings_binary(payload.get("user"), payload.get("token"))
+                got_token = payload.get("token")
+                got_user = payload.get("user")
+                if got_token:
+                    save_settings_binary(got_user, got_token)
+                else:
+                    if os.path.exists("settings.bin"):
+                        os.remove("settings.bin")
+                # save_settings_binary(payload.get("user"), payload.get("token"))
+
             if not self.UDP_obj:
                 self.UDP_obj = ClientThreadUDP(self)
                 self.UDP_obj.start()
@@ -765,6 +773,14 @@ class ClientThread(threading.Thread):
         self.running = False
         if self.UDP_obj:
             self.UDP_obj.running = False
+        # --- ---
+        try:
+            if self.state in [STATE_LOBBY, STATE_GAME]:
+                self.send_to_server(self.build_message("LOGOUT", remember=True))
+        except Exception:
+            pass
+        # ------------------------------------------
+
         try:
             self.sock.close()
             self.UDP_sock.close()
@@ -1329,6 +1345,7 @@ def cli_game_loop(cli_obj):
         for event in pygame.event.get():  # try to improve it, faster somehow
             if event.type == pygame.QUIT:
                 cli_obj.close()
+                cli_obj.join()
                 pygame.quit()
                 raise SystemExit
             if event.type == pygame.KEYDOWN:
@@ -1379,6 +1396,7 @@ def cli_game_loop(cli_obj):
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 cli_obj.close()
+                cli_obj.join()
                 pygame.quit()
                 raise SystemExit
         screen.fill((0, 0, 0))
@@ -1706,12 +1724,14 @@ def home_screen(screen, client):
         # --- ניהול לחיצות ---
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
+                client.close()
+                client.join()
                 pygame.quit()
                 raise SystemExit
 
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 if logout_btn_rect.collidepoint(event.pos):
-                    client.send_to_server(client.build_message("LOGOUT"))
+                    client.send_to_server(client.build_message("LOGOUT", remember=False))
                     #client.last_board_id = -1
                     if os.path.exists("settings.bin"):
                         os.remove("settings.bin")
@@ -1812,6 +1832,7 @@ def home_screen(screen, client):
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 client.close()
+                client.join()
                 pygame.quit()
                 raise SystemExit
 
@@ -2152,7 +2173,7 @@ def draw_link(screen, text, x, y, font):
     return rect
 
 
-def pre_login_screen(screen, remembered_user):
+def pre_login_screen(screen, remembered_user, client_obj):
     clock = pygame.time.Clock()
     font_play = pygame.font.SysFont("Segoe UI", 40, bold=True)
     # הגדרת כפתורים
@@ -2176,6 +2197,8 @@ def pre_login_screen(screen, remembered_user):
                             no_btn, (100, 100, 110), (130, 130, 140), (mx, my))
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
+                client_obj.close()
+                client_obj.join()
                 pygame.quit()
                 raise SystemExit
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
@@ -2196,15 +2219,15 @@ def main():
         client_obj.start()
         # מחכים שניה שה-Handshake של ה-RSA/AES יסתיים בשקט
         while client_obj.state == STATE_HANDSHAKE and client_obj.is_alive():
+
             time.sleep(0.05)
 
         # automatic login try here
         remembered_user, remembered_token = load_settings_binary()
         login_done = False
         if remembered_user and remembered_token:
-            choice = pre_login_screen(screen, remembered_user)
+            choice = pre_login_screen(screen, remembered_user, client_obj)
             if choice:
-                # המשתמש אישר - שולחים טוקן (מוצפן ב-AES שכבר מוכן)
                 msg = client_obj.build_message("TOKEN_LOGIN",
                                                user=remembered_user,
                                                token=remembered_token,
@@ -2212,7 +2235,9 @@ def main():
                 client_obj.send_to_server(msg)
                 client_obj.should_remember = True
                 timeout = time.time() + 5
-                while time.time() < timeout and client_obj.state == STATE_AUTH:
+                while time.time() < timeout and client_obj.state == STATE_AUTH:  # must change it - use the error that come back
+                    if client_obj.error_num == "007":
+                        break
                     time.sleep(0.05)
                 if client_obj.state == STATE_LOBBY:
                     login_done = True
@@ -2247,6 +2272,8 @@ def main():
             time.sleep(0.1)
         except SystemExit:
             if 'client_obj' in locals() and client_obj is not None and client_obj.is_alive():
+                client_obj.running = False
+                client_obj.close()
                 client_obj.join()
             break
 
