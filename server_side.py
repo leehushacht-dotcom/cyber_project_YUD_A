@@ -488,14 +488,8 @@ class Client(threading.Thread):
             if self.username:
                 print(f"[Logout] User {self.username} is logging out.")
                 self.server.user_manager.logout_user(self.username)
-        # ה-handle_client_udp_obj כבר יודע למחוק לפי ה-TID
-        self.server.handle_client_udp_obj.remove_client(self.tid)
-        # 3. הסרת המשתמש מרשימת השחקנים הפעילים בלוח
-        self.server.players_manager.remove_player(self)
-        # 4. ניקוי תור ההודעות (כדי שלא יישלחו הודעות זבל לסוקט שנסגר)
-        self.server.async_msg.not_ready(int(self.tid))
-        self.server.UDP_async_msg.not_ready(str(self.tid))
-        self.username = None
+        else:
+            print(f"[Logout] {self.username} closed the game. Token kept.")
         self.close()
 
     def token_login_f(self, payload):
@@ -668,6 +662,15 @@ class Client(threading.Thread):
     def close(self):
         try:
             if self.username:
+
+                try:
+                    cli_money = self.server.players_manager.pop_player_coins(self)
+                    if cli_money and cli_money > 0:
+                        self.server.user_manager.add_coins(self.username, cli_money)
+                        print(f"[SAVED] {cli_money} coins saved for {self.username} before closing.")
+                except Exception:
+                    pass
+
                 self.server.user_manager.save_users()
             self.server.UDP_async_msg.not_ready(str(self.tid))
             self.server.handle_client_udp_obj.remove_client(self.tid)

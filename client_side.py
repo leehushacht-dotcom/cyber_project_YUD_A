@@ -777,6 +777,7 @@ class ClientThread(threading.Thread):
         try:
             if self.state in [STATE_LOBBY, STATE_GAME]:
                 self.send_to_server(self.build_message("LOGOUT", remember=True))
+                print("LOGOUT SUCCESS!")
         except Exception:
             pass
         # ------------------------------------------

@@ -514,9 +514,13 @@ class HoldPlayersData:
                 self._object_remove(x_y[0], x_y[1], SNAKE_BODY, snake, x_y[2])
             else:
                 self._object_remove(x_y[0], x_y[1], SNAKE_HEAD, snake, x_y[2])
-            if True:  # (random.random() > 0.25 and count % 3 == 0) # השארתי True כפי שרשמת לבדיקות
+
+            if random.random() > 0.25 and count % 3 == 0:
                 val = self.create_better_fruit_value()
-                self._spawn_apple(x_y[0], x_y[1], val)  # תיקון: העברנו את val במקום 3
+                self._spawn_apple(x_y[0], x_y[1], val)
+            elif random.random() > 0.25:
+                self._spawn_coin(x_y[0], x_y[1])
+
             count += 1
         self.in_game_players.pop(snake, None)
         self.died_snakes.append(str(snake.tid))
