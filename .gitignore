@@ -1,3 +1,16 @@
-.idea/
+# Security and Keys
+*.pem
+private_key_leehu.pem
+public_key_leehu.pem
+
+# Binary Data and Settings
+*.bin
+settings.bin
+
+# Python specific ignores
 __pycache__/
 *.pyc
+*.pkl
+.idea/
+#__pycache__/
+#*.pyc
