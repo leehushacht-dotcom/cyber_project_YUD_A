@@ -380,7 +380,7 @@ class HoldPlayersData:
                             player.is_ready = True
                 if not bot:
                     print("send NEW_BOARD from file")
-                    player.send_new_board_f()
+                    player.need_new_board = True
                     return True, player
             else:
                 print("wait!")
@@ -514,8 +514,8 @@ class HoldPlayersData:
                 self._object_remove(x_y[0], x_y[1], SNAKE_BODY, snake, x_y[2])
             else:
                 self._object_remove(x_y[0], x_y[1], SNAKE_HEAD, snake, x_y[2])
-
-            if random.random() > 0.25 and count % 3 == 0:
+            # think of better way
+            if random.random() > 0.75:
                 val = self.create_better_fruit_value()
                 self._spawn_apple(x_y[0], x_y[1], val)
             elif random.random() > 0.25:

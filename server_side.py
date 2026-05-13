@@ -389,6 +389,8 @@ class Client(threading.Thread):
         self.username = None
         # self.password = None
         self.sync_me = False
+        self.need_new_board = False
+
         self.snake_color = None
         self.cmd_dict = {"COLOR": self.color_f, "KEY": self.key_f, "SIGNUP": self.signup_f,
                          "LOGIN": self.login_f, "BUY": self.buy_f, "TOKEN_LOGIN": self.token_login_f,
@@ -593,7 +595,8 @@ class Client(threading.Thread):
         success = self.server.players_manager.add_new_player_to_game(self)
         # success mean | True --> if server found spot for me | False --> server put me on wait
         if success:
-            self.send_new_board_f()
+            self.need_new_board = True
+            #self.send_new_board_f()
             #self.state = STATE_GAME
             #self.server.async_msg.player_ready_for_game(int(self.tid))
             #self.server.UDP_async_msg.player_ready_for_game(int(self.tid))
@@ -602,7 +605,6 @@ class Client(threading.Thread):
 
     # --------------------------------------------------------------------------------------------------------------
     def send_new_board_f(self, sync=None, values=True):
-
         if not sync:
             sync = self.server.players_manager.get_full_sync(new_map=True)
         self.server.async_msg.put_msg_by_user(
@@ -793,16 +795,22 @@ class Server:
                 else:
                     # players who asked for personal sync
                     need_sync_players = [c for c in self.client_obj_lst if c.sync_me]
-                    if need_sync_players:
+                    need_new_board_players = [c for c in self.client_obj_lst if c.need_new_board]
+                    if need_sync_players or need_new_board_players:
                         sync = self.players_manager.get_full_sync()
-                        personal_tcp_delta = delta.copy()
-                        personal_tcp_delta["full_grid"] = sync["full_grid"]
-                        personal_tcp_delta.pop("remove", None)
-                        personal_tcp_delta.pop("add", None)
-                        personal_msg = self.build_message("BOARD", delta=personal_tcp_delta, ID=tick_id)
-                        for cli in need_sync_players:
-                            self.async_msg.put_msg_by_user(personal_msg, int(cli.tid))
-                            cli.sync_me = False
+                        sync_new_map = self.players_manager.get_full_sync(new_map=True)
+                        if need_sync_players:
+                            personal_tcp_delta = delta.copy()
+                            personal_tcp_delta["full_grid"] = sync["full_grid"]
+                            personal_tcp_delta.pop("remove", None)
+                            personal_tcp_delta.pop("add", None)
+                            personal_msg = self.build_message("BOARD", delta=personal_tcp_delta, ID=tick_id)
+                            for cli in need_sync_players:
+                                self.async_msg.put_msg_by_user(personal_msg, int(cli.tid))
+                                cli.sync_me = False
+                        for cli in need_new_board_players:
+                            cli.send_new_board_f(sync=sync_new_map, values=True)
+                            cli.need_new_board = False
                 # --------------------------------------------------
                 if delta.get("died"):
                     self.send_broadcast_death(delta["died"])

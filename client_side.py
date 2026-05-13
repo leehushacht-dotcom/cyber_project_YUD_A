@@ -68,7 +68,7 @@ def save_settings_binary(username, token):
         encrypted_data = xor_data(packed_data, fingerprint)
         with open("settings.bin", "wb") as f:
             f.write(encrypted_data)
-        print("Settings saved in binary format.")
+        ("Settings saved in binary format.")
     except Exception as e:
         print(f"Error saving binary: {e}")
 
@@ -87,7 +87,7 @@ def load_settings_binary():
     return None, None
 
 
-print("finger print --> ", get_device_fingerprint())
+#print("finger print --> ", get_device_fingerprint())
 
 SNAKE_BODY = 1
 SNAKE_HEAD = 2
@@ -132,7 +132,7 @@ class BgSnake:
         self.x = random.randint(0, w)
         self.y = random.randint(0, h)
         self.angle = random.uniform(0, 2 * math.pi)
-        self.speed = random.uniform(1.0, 2.5)  # מהירות איטית ומרגיעה
+        self.speed = 2.5 #random.uniform(1.0, 2.5)  # מהירות איטית ומרגיעה
         self.length = random.randint(20, 50)
         self.history = []
 
@@ -263,6 +263,8 @@ class ClientThreadUDP(threading.Thread):
         }
 
     def board_f(self, payload):
+        if self.cli_obj.state != STATE_GAME:
+            return
         self.cli_obj.board_f(payload)
 
 
@@ -309,6 +311,7 @@ class ClientThread(threading.Thread):
         self.visual_camera_x = -1.0
         self.visual_camera_y = -1.0
         self.visual_snakes = {}  # מילון חדש: {p_id: [(x,y), (x,y), ...]}
+        self.visual_lengths = {}
 
         self.head_history = {}  # tid to head history
         self.snake_lengths = {}
@@ -336,6 +339,7 @@ class ClientThread(threading.Thread):
                 if not data_rec:
                     break
                 data_recv = msgpack.unpackb(data_rec, raw=False)
+                print("-------------------\nrecved:", data_recv, "\n----------------------")
                 # data_recv = json.loads(data_rec)
                 cmd = data_recv.get("cmd")
                 payload = data_recv.get("payload", {})
@@ -357,7 +361,9 @@ class ClientThread(threading.Thread):
     def send_to_server(self, data_dict):  # need to build with self.build_message() and then call this proc
         try:
             with self.lock:
+                print("--------------------\nRaw : ", data_dict)
                 data_bytes = msgpack.packb(data_dict)
+                print("Sent TCP: ", data_bytes, "\n-------------------")
                 # json_data = json.dumps(data_dict)  # dict --> JSON string
                 self.transport_data.send_with_size(data_bytes)  # string --> bytes
         except Exception as e:
@@ -371,7 +377,8 @@ class ClientThread(threading.Thread):
                     data_bytes = self.encrypt_data_with_AES(data_bytes)
                 server_address = (self.ip, self.UDP_port)
                 self.UDP_sock.sendto(data_bytes, server_address)
-                print("sent UDP", data_bytes)
+                print("--------------------\nsent UDP", data_bytes)
+                print("RAW: ", data_dict, "\n----------------------")
         except socket.error as e:
             print(e)
         except Exception as e:
@@ -445,9 +452,8 @@ class ClientThread(threading.Thread):
                     self.last_board_id = tick_id - 1
                 # 2ג. יש לנו חור! חסרות חבילות
                 if tick_id > self.last_board_id + 1:
-                    print("missing packets")
                     missing_ticks = tick_id - self.last_board_id - 1
-                    print(missing_ticks)
+                    print("packet missing: ", missing_ticks)
                     # נבדוק אם כל הטיקים החסרים נמצאים בהיסטוריה
                     can_recover = True
                     for missing_id in range(self.last_board_id + 1, tick_id):
@@ -658,6 +664,7 @@ class ClientThread(threading.Thread):
     def new_board_f(self, payload):
         with self.lock:
             self.grid = {}
+
             #self.UDP_port = payload.get("UDPport")
             sync = payload.get("sync")
             # --- שמונע את הקפיצה בהתחלה ---
@@ -709,7 +716,7 @@ class ClientThread(threading.Thread):
                 self.UDP_port = payload.get("UDPport")
 
             self.my_amount_of_coins = payload.get("total_coins", 0)
-            print(self.my_amount_of_coins)
+            #print(self.my_amount_of_coins)
             self.game_shop = payload.get("shop")
             self.items_i_own = payload.get("own")
             if "token" in payload and "user" in payload:
@@ -725,7 +732,7 @@ class ClientThread(threading.Thread):
             if not self.UDP_obj:
                 self.UDP_obj = ClientThreadUDP(self)
                 self.UDP_obj.start()
-                print("sent_INIT !!!")
+                #print("sent_INIT !!!")
                 self.send_to_server_UDP(self.build_message("INIT", tid=self.tid), encrypt=False)
         if subject == "buy":
             # coins=new_coins, own=new_owned
@@ -765,9 +772,12 @@ class ClientThread(threading.Thread):
         self.head_history = {}
         self.snake_lengths = {}
         self.target_snakes = {}
+        self.visual_lengths = {}
         self.grid = {}
         self.alive = True
         self.leaders = None
+        self.asking_server_for_sync = False
+        self.pending_udp_updates.clear()
 
     def close(self):
         self.running = False
@@ -796,7 +806,7 @@ def display_new_board(grid, my_tid, tid_to_color, screen, cli_obj, offset_x, off
         pygame.draw.rect(screen, (255, 0, 0), world_rect, 3)
 
         # only fruits and coins
-        for (x, y, ticket), (kind, p_id_str) in list(grid.items()):
+        for (x, y, ticket), (kind, p_id_str) in grid.items():
             if kind == APPLE:
                 # ה-ticket הוא ה-value שקובע אם התפוח אדום, כחול או ירוק
                 apple_x = offset_x + x * BLOCK_SIZE
@@ -946,8 +956,8 @@ def create_coin_surface(block_size):
 
 
 def draw_leaderboard(screen, leaders, tid_to_color, my_tid, snake_lengths, tid_to_username):
-    print(tid_to_username)
-    print(">>>>>>>>>>>>>>>")
+    #print(tid_to_username)
+    #print(">>>>>>>>>>>>>>>")
     if not leaders:
         return
     start_x = screen.get_width() - 170
@@ -985,7 +995,7 @@ def draw_leaderboard(screen, leaders, tid_to_color, my_tid, snake_lengths, tid_t
         screen.blit(txt, (10, screen.get_height() - 30))
 
 
-def draw_minimap(screen, cli_obj):
+def draw_minimap(screen, cli_obj, local_target_snakes):  # הוספנו פרמטר
     MAP_SIZE = 100
     MARGIN = 15
     map_x = screen.get_width() - MAP_SIZE - MARGIN
@@ -995,22 +1005,18 @@ def draw_minimap(screen, cli_obj):
     screen.blit(overlay, (map_x, map_y))
     border_color = (255, 255, 255)
     border_thickness = 1
-    world_rect_on_screen = pygame.Rect(
-        map_x,
-        map_y,
-        MAP_SIZE,
-        MAP_SIZE)
+    world_rect_on_screen = pygame.Rect(map_x, map_y, MAP_SIZE, MAP_SIZE)
     pygame.draw.rect(screen, border_color, world_rect_on_screen, border_thickness)
-    with cli_obj.lock:
-        # משתמשים ברשימת הנחשים המוכנה!
-        for p_id_str, segments in cli_obj.target_snakes.items():
-            if len(segments) > 0:
-                w_x, w_y = segments[0] # חוליה 0 היא הראש
-                rel_x = (w_x / cli_obj.board_width) * MAP_SIZE
-                rel_y = (w_y / cli_obj.board_height) * MAP_SIZE
-                color = cli_obj.tid_to_color.get(str(cli_obj.tid), [(255, 255, 255)])[0] if p_id_str == str(cli_obj.tid) else (255, 255, 255)
-                pygame.draw.circle(screen, color, (int(map_x + rel_x), int(map_y + rel_y)), 2)
 
+    # אין פה יותר block נעילה! אנחנו משתמשים בעותק המקומי הבטוח
+    for p_id_str, segments in local_target_snakes.items():
+        if len(segments) > 0:
+            w_x, w_y = segments[0]  # חוליה 0 היא הראש
+            rel_x = (w_x / cli_obj.board_width) * MAP_SIZE
+            rel_y = (w_y / cli_obj.board_height) * MAP_SIZE
+            color = cli_obj.tid_to_color.get(str(cli_obj.tid), [(255, 255, 255)])[0] if p_id_str == str(
+                cli_obj.tid) else (255, 255, 255)
+            pygame.draw.circle(screen, color, (int(map_x + rel_x), int(map_y + rel_y)), 2)
 
 def prepare_danger_tape_surface():
     surf = pygame.Surface((BLOCK_SIZE, BLOCK_SIZE))
@@ -1036,6 +1042,7 @@ def prepare_danger_tape_surface():
     pygame.draw.rect(surf, (0, 0, 0), (0, 0, BLOCK_SIZE, BLOCK_SIZE), 1)
 
     return surf
+
 def prepare_wall_surface():
     # יצירת משטח עם תמיכה בשקיפות (כדי שהקוצים יבלטו על הרקע השחור של הלוח)
     surf = pygame.Surface((BLOCK_SIZE, BLOCK_SIZE), pygame.SRCALPHA)
@@ -1197,8 +1204,9 @@ LEADERBOARD_OVERLAY.fill((0, 0, 0, 160))
 MINIMAP_OVERLAY = pygame.Surface((100, 100), pygame.SRCALPHA)
 MINIMAP_OVERLAY.fill((0, 0, 0, 120))
 
-
+"""
 def update_and_draw_world1(cli_obj, screen, bg_surface, lerp_factor):
+
     # יצירת מילון למעקב אחרי הגדילה הויזואלית (נוצר פעם אחת עצמאית)
     if not hasattr(cli_obj, 'visual_lengths'):
         cli_obj.visual_lengths = {}
@@ -1308,6 +1316,136 @@ def update_and_draw_world1(cli_obj, screen, bg_surface, lerp_factor):
 
     draw_leaderboard(screen, cli_obj.leaders, cli_obj.tid_to_color, cli_obj.tid, cli_obj.snake_lengths, cli_obj.tid_to_username)
     draw_minimap(screen, cli_obj)
+"""
+
+
+def update_and_draw_world1(cli_obj, screen, bg_surface, lerp_factor):
+    with cli_obj.lock:
+        # 1. מתמטיקת המצלמה נשארת בתוך המנעול!
+        if cli_obj.camera_x != -1:
+            cli_obj.visual_camera_x += (cli_obj.camera_x - cli_obj.visual_camera_x) * lerp_factor
+            cli_obj.visual_camera_y += (cli_obj.camera_y - cli_obj.visual_camera_y) * lerp_factor
+
+        # גזירת משתנים מקומיים קפואים עבור ציור המסך כולו
+        local_cam_x = cli_obj.visual_camera_x
+        local_cam_y = cli_obj.visual_camera_y
+
+        # 2. גזירת עותקים רדודים מהירים
+        local_target_snakes = dict(cli_obj.target_snakes)
+        local_grid = dict(cli_obj.grid)
+        local_tid_to_color = dict(cli_obj.tid_to_color)
+        local_tid_to_username = dict(cli_obj.tid_to_username)
+        local_snake_lengths = dict(cli_obj.snake_lengths)
+        local_leaders = list(cli_obj.leaders) if cli_obj.leaders else None
+        local_tid = cli_obj.tid
+
+        # 3. סנכרון בטוח של המשתנים הויזואליים בזמן שהמנעול סגור
+        active_tids = list(local_target_snakes.keys())
+        cli_obj.visual_snakes = {k: v for k, v in cli_obj.visual_snakes.items() if k in active_tids}
+        cli_obj.head_history = {k: v for k, v in cli_obj.head_history.items() if k in active_tids}
+        cli_obj.visual_lengths = {k: v for k, v in cli_obj.visual_lengths.items() if k in active_tids}
+
+        # הוספת נחשים חדשים שטרם קיבלו ייצוג ויזואלי
+        for p_id_str, target_list in local_target_snakes.items():
+            if p_id_str not in cli_obj.visual_snakes and target_list:
+                cli_obj.visual_snakes[p_id_str] = [list(p) for p in target_list]
+
+        # עותק רדוד של המילון הויזואלי לרוץ עליו בחוץ בבטחה
+        local_visual_snakes = dict(cli_obj.visual_snakes)
+
+    # =========================================================
+    # >>> המנעול פתוח! ה-UDP (board_f) חופשי לרוץ במלוא המהירות! <<<
+    # =========================================================
+
+    # =========================================================
+    # שלב 2: מתמטיקה ואנימציה (מחוץ למנעול)
+    # =========================================================
+    for p_id_str, target_list in local_target_snakes.items():
+        if not target_list:
+            continue
+
+        v_snake = local_visual_snakes.get(p_id_str)
+        if not v_snake:
+            continue
+
+        # --- טיפול בשינויי אורך In-Place ---
+        while len(v_snake) < len(target_list):
+            v_snake.append(list(v_snake[-1]))
+
+        if len(v_snake) > len(target_list):
+            del v_snake[len(target_list):]
+
+        # --- מתמטיקת Lerp לחוליות ---
+        for i in range(len(v_snake)):
+            t_x, t_y = target_list[i]
+            v_snake[i][0] += (t_x - v_snake[i][0]) * lerp_factor
+            v_snake[i][1] += (t_y - v_snake[i][1]) * lerp_factor
+
+    # =========================================================
+    # שלב 3: הציור הכבד של PyGame (מחוץ למנעול, עם מצלמה יציבה)
+    # =========================================================
+    # שימוש בלעדי ב- local_cam_x / local_cam_y
+    offset_x = screen.get_width() // 2 - (local_cam_x * BLOCK_SIZE)
+    offset_y = screen.get_height() // 2 - (local_cam_y * BLOCK_SIZE)
+
+    screen.blit(bg_surface, (offset_x, offset_y))
+
+    # מציירים את הלוח בעזרת הרשת המקומית
+    display_new_board(local_grid, local_tid, local_tid_to_color, screen, cli_obj, offset_x, offset_y)
+
+    # מציירים את הנחשים
+    for p_id_str, segments in local_visual_snakes.items():
+        color_list = local_tid_to_color.get(p_id_str)
+        if not color_list:
+            continue
+
+        head_color = (color_list[0][0], color_list[0][1], color_list[0][2])
+
+        for i in range(len(segments) - 1, -1, -1):
+            v_x, v_y = segments[i]
+            # חישוב מיקום על המסך בעזרת המצלמה המקומית המאובטחת!
+            screen_x = screen.get_width() // 2 - (local_cam_x * BLOCK_SIZE) + (v_x * BLOCK_SIZE)
+            screen_y = screen.get_height() // 2 - (local_cam_y * BLOCK_SIZE) + (v_y * BLOCK_SIZE)
+
+            if -BLOCK_SIZE * 2 < screen_x < screen.get_width() + BLOCK_SIZE * 2 and -BLOCK_SIZE * 2 < screen_y < screen.get_height() + BLOCK_SIZE * 2:
+                center = (int(screen_x + BLOCK_SIZE / 2), int(screen_y + BLOCK_SIZE / 2))
+                base_radius = int(BLOCK_SIZE / 1.4)
+
+                if i == 0:
+                    player_name = local_tid_to_username.get(p_id_str, f"Player {p_id_str}")
+                    name_surf = GLOBAL_FONT.render(player_name, True, (255, 255, 255))
+                    name_x = center[0] - name_surf.get_width() // 2
+                    name_y = center[1] - base_radius - 20
+                    screen.blit(name_surf, (name_x, name_y))
+
+                    pygame.draw.circle(screen, (30, 30, 30), center, base_radius + 2)
+                    pygame.draw.circle(screen, head_color, center, base_radius + 1)
+
+                    dx, dy = 1, 0
+                    if len(segments) > 1:
+                        nx, ny = segments[1]
+                        dx, dy = v_x - nx, v_y - ny
+                        length = (dx ** 2 + dy ** 2) ** 0.5
+                        if length != 0:
+                            dx, dy = dx / length, dy / length
+
+                    eye1_pos = (center[0] + int(dx * 4 - dy * 5), center[1] + int(dy * 4 + dx * 5))
+                    eye2_pos = (center[0] + int(dx * 4 + dy * 5), center[1] + int(dy * 4 - dx * 5))
+                    pupil1_pos = (center[0] + int(dx * 6 - dy * 5), center[1] + int(dy * 6 + dx * 5))
+                    pupil2_pos = (center[0] + int(dx * 6 + dy * 5), center[1] + int(dy * 6 - dx * 5))
+
+                    pygame.draw.circle(screen, (255, 255, 255), eye1_pos, 4)
+                    pygame.draw.circle(screen, (255, 255, 255), eye2_pos, 4)
+                    pygame.draw.circle(screen, (0, 0, 0), pupil1_pos, 2)
+                    pygame.draw.circle(screen, (0, 0, 0), pupil2_pos, 2)
+                else:
+                    body_color = color_list[i % len(color_list)]
+                    darker_color = (max(0, body_color[0] - 60), max(0, body_color[1] - 60), max(0, body_color[2] - 60))
+                    pygame.draw.circle(screen, darker_color, center, base_radius)
+                    pygame.draw.circle(screen, body_color, center, base_radius - 2)
+
+    draw_leaderboard(screen, local_leaders, local_tid_to_color, local_tid, local_snake_lengths, local_tid_to_username)
+    draw_minimap(screen, cli_obj, local_target_snakes)
 
 
 def cli_game_loop(cli_obj):
@@ -1436,19 +1574,20 @@ def draw_premium_button(screen, text_surface, rect, base_color, hover_color, mou
 def home_screen(screen, client):
     global COLOR_PACK
     pygame.display.set_caption("SNAKE ONLINE")
+    """
     try:
         bg_image = pygame.image.load('background.png').convert()
         bg_image = pygame.transform.scale(bg_image, (600, 600))
     except Exception as e:
         bg_image = None
-
-    font_logo = pygame.font.SysFont(None, 80, bold=True)
-    font_play = pygame.font.SysFont(None, 60, bold=True)
+    """
+    font_logo = pygame.font.SysFont("Segoe UI", 65, bold=True)
+    font_play = pygame.font.SysFont("Arial Black", 45)
     font_button = pygame.font.SysFont(None, 40)
     font_small = pygame.font.SysFont(None, 24)
 
     text_logo = font_logo.render("SNAKE ONLINE", True, (255, 255, 255))
-    text_logo_rect = text_logo.get_rect(center=(300, 100))
+    text_logo_rect = text_logo.get_rect(center=(300, 150))
 
     logout_btn_rect = pygame.Rect(10, 60, 100, 35)
     logout_text = font_small.render("LOGOUT", True, (255, 255, 255))
@@ -1496,6 +1635,7 @@ def home_screen(screen, client):
 
     clock = pygame.time.Clock()
     waiting_for_user = True
+    """
 
     # ----------------- background ----------------------------
     # --- הכנת רקע הזירה ללובי (מפת דמו ענקית) ---
@@ -1513,8 +1653,15 @@ def home_screen(screen, client):
 
     pan_x, pan_y = 0.0, 0.0  # משתנים למעקב אחרי תנועת המצלמה
     # ----------------- background ----------------------------
+    """
+    bg_snakes = [BgSnake(600, 600) for _ in range(15)]
 
     while waiting_for_user:
+        screen.fill(COLOR_BG)
+        for s in bg_snakes:
+            s.update()
+            s.draw(screen)
+        """
         # ----------------- background ----------------------------
         # --- הנעת רקע הזירה באלכסון (Infinite Pan) ---
         pan_speed = 0.4  # מהירות גלילה איטית וסינמטית
@@ -1533,7 +1680,7 @@ def home_screen(screen, client):
         dark_overlay.fill((15, 15, 20, 100))  # גוון מעט כחלחל-שחור להרגשה עמוקה
         screen.blit(dark_overlay, (0, 0))
         # ----------------- background ----------------------------
-
+        """
         screen.blit(text_logo, text_logo_rect)
         screen.blit(COIN_SURFACE_FOR_SHOW, (10, 20))
         coin_text = font_button.render(f" {client.my_amount_of_coins}", True, (255, 215, 0))
@@ -1571,54 +1718,21 @@ def home_screen(screen, client):
             pygame.draw.rect(screen, (255, 215, 0), shop_btn_rect, width=2, border_radius=8)
             screen.blit(SHOP_ICON, (shop_btn_rect.x + 2, shop_btn_rect.y + 2))
             # מראה את התבנית הנוכחית מעל כפתור הצבעים
-            # --- תצוגת נחש חי (Animated Skin Preview) ---
-            # הנחש שוכב לרוחב, הראש בשמאל, הזנב בימין, וגלים עוברים לו בגוף!
-            time_t = time.time() * 2.5  # קצב הזחילה (הגלים)
-            center_x, center_y = 300, 310
-            amplitude_y = 18  # גובה הגלים (למעלה ולמטה)
-            spacing = 16  # המרחק האופקי בין חוליה לחוליה
+            # --- נחש שוכב סטטי (גרסה מקוצרת) ---
+            start_x, center_y, spacing = 196, 310, 16  # חישבתי מראש את נקודת ההתחלה כדי לחסוך קוד
 
-            MAX_SEGMENTS = 14
-
-            # חישוב המיקום ההתחלתי של הראש כדי שהנחש יהיה ממורכז בדיוק באמצע המסך
-            start_x = center_x - ((MAX_SEGMENTS - 1) * spacing) // 2
-
-            for i in range(MAX_SEGMENTS - 1, -1, -1):
-                c = pattern[i % len(pattern)]
-
-                # ה-X קבוע לכל חוליה (i=0 הראש הכי שמאלי, i=13 הזנב הכי ימני)
+            for i in range(13, -1, -1):  # 14 חוליות
                 hx = start_x + (i * spacing)
+                radius = 12 if i == 0 else 10
 
-                # ה-Y מקבל גל סינוס שנוסע מהראש לזנב
-                hy = center_y + math.sin(time_t - i * 0.4) * amplitude_y
+                # ציור הגוף והמסגרת
+                pygame.draw.circle(screen, pattern[i % len(pattern)], (hx, center_y), radius)
+                pygame.draw.circle(screen, (0, 0, 0), (hx, center_y), radius, 1)
 
-                radius = 12 if i == 0 else 10  # הראש קצת יותר גדול
-
-                # ציור החוליה
-                pygame.draw.circle(screen, c, (int(hx), int(hy)), radius)
-                pygame.draw.circle(screen, (0, 0, 0) if i == 0 else (0, 0, 0), (int(hx), int(hy)), radius, 1)
-
-                # ציור עיניים לראש
-                if i == 0:
-                    # כדי לדעת לאן הראש פונה, נבדוק איפה נמצאת החוליה שמאחוריו (i=1)
-                    hx_1 = start_x + (1 * spacing)
-                    hy_1 = center_y + math.sin(time_t - 1 * 0.4) * amplitude_y
-
-                    # וקטור הכיוון: מהגוף אל הראש
-                    dx, dy = hx - hx_1, hy - hy_1
-                    dist = math.hypot(dx, dy)
-                    if dist != 0:
-                        dx, dy = dx / dist, dy / dist
-                    else:
-                        dx, dy = -1, 0  # ברירת מחדל: שמאלה
-
-                    # מיקום העיניים מתעדכן דינמית לפי השיפוע של הגל!
-                    pygame.draw.circle(screen, (255, 255, 255), (int(hx + dx * 4 - dy * 5), int(hy + dy * 4 + dx * 5)),
-                                       3)
-                    pygame.draw.circle(screen, (255, 255, 255), (int(hx + dx * 4 + dy * 5), int(hy + dy * 4 - dx * 5)),
-                                       3)
-                    pygame.draw.circle(screen, (0, 0, 0), (int(hx + dx * 5 - dy * 5), int(hy + dy * 5 + dx * 5)), 1)
-                    pygame.draw.circle(screen, (0, 0, 0), (int(hx + dx * 5 + dy * 5), int(hy + dy * 5 - dx * 5)), 1)
+                if i == 0:  # ציור עיניים לראש (מסתכל שמאלה)
+                    for dy in [-5, 5]:  # לולאה קטנה שחוסכת שורות לשתי העיניים
+                        pygame.draw.circle(screen, (255, 255, 255), (hx - 4, center_y + dy), 3)
+                        pygame.draw.circle(screen, (0, 0, 0), (hx - 5, center_y + dy), 1)
 
         elif show_color_picker:
             # --- פופ-אפ עריכת Skin ---
@@ -1825,11 +1939,11 @@ def home_screen(screen, client):
 
         pygame.display.flip()
         clock.tick(30)
-    print("sending color to server...")
+    #print("sending color to server...")
     # שולחים את הרשימה המלאה של הצבעים!
     client.send_to_server(client.build_message("COLOR", color=pattern))
     while client.state == STATE_LOBBY:
-        print(f"Current State: {client.state}, My TID: {client.tid}, Active Users:")
+        #print(f"Current State: {client.state}, My TID: {client.tid}, Active Users:")
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 client.close()

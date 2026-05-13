@@ -4,7 +4,7 @@ import socket
 
 SIZE_HEADER_FORMAT = "000000000|" # n digits for data size + one delimiter
 size_header_size = len(SIZE_HEADER_FORMAT)
-TCP_DEBUG = True
+TCP_DEBUG = False
 
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad, unpad
@@ -75,7 +75,7 @@ class TransportData:
             data = b""  # Partial data is like no data !
             return data
         if self.key != "KEY":
-            print(len(data))
+            #print(len(data))
             try:
                 iv = data[:16]
                 ciphertext = data[16:]
