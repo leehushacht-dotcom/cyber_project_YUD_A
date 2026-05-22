@@ -604,11 +604,11 @@ class Client(threading.Thread):
             print(f"CLASS:client | PROC:color | info:waiting for place in board")
 
     # --------------------------------------------------------------------------------------------------------------
-    def send_new_board_f(self, sync=None, values=True):
+    def send_new_board_f(self, tick, sync=None, values=True):
         if not sync:
             sync = self.server.players_manager.get_full_sync(new_map=True)
         self.server.async_msg.put_msg_by_user(
-            self.build_message("NEW_BOARD", sync=sync, UDPport=self.server.UDP_port1), int(self.tid))
+            self.build_message("NEW_BOARD", sync=sync, UDPport=self.server.UDP_port1, ID=tick), int(self.tid))
         if values:
             self.state = STATE_GAME
             self.server.async_msg.player_ready_for_game(int(self.tid))
@@ -785,8 +785,8 @@ class Server:
                     if "full_grid" in sync:
                         tcp_delta = delta.copy()
                         tcp_delta["full_grid"] = sync["full_grid"]
-                        tcp_delta.pop("remove")
-                        tcp_delta.pop("add")
+                        tcp_delta.pop("remove", None)
+                        tcp_delta.pop("add", None)
                         tcp_board_msg = self.build_message("BOARD", delta=tcp_delta, ID=tick_id)
                         send_tcp = True
                     next_sync_tick = tick_id + INTERVAL
@@ -809,7 +809,7 @@ class Server:
                                 self.async_msg.put_msg_by_user(personal_msg, int(cli.tid))
                                 cli.sync_me = False
                         for cli in need_new_board_players:
-                            cli.send_new_board_f(sync=sync_new_map, values=True)
+                            cli.send_new_board_f(tick_id, sync=sync_new_map, values=True)
                             cli.need_new_board = False
                 # --------------------------------------------------
                 if delta.get("died"):

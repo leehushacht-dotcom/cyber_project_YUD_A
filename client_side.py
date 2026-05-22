@@ -195,17 +195,32 @@ class InputBox:
         self.is_password = is_password
         self.font = pygame.font.SysFont("Segoe UI", 24)
 
+        # Cursor (סמן מהבהב)
+        self.cursor_visible = True
+        self.cursor_timer = pygame.time.get_ticks()
+        self.cursor_interval = 500  # milliseconds
+
     def handle_event(self, event):
         if event.type == pygame.MOUSEBUTTONDOWN:
             # שינוי פוקוס
             self.active = self.rect.collidepoint(event.pos)
             self.color = COLOR_ACTIVE if self.active else COLOR_INACTIVE
         if event.type == pygame.KEYDOWN and self.active:
+            # reset cursor blink on typing
+            self.cursor_visible = True
+            self.cursor_timer = pygame.time.get_ticks()
             if event.key == pygame.K_BACKSPACE:
                 self.text = self.text[:-1]
             else:
-                if len(self.text) < 30:  # הגבלת אורך
-                    self.text += event.unicode
+                if len(self.text) < 30:
+                    if event.unicode.isalnum():
+                        self.text += event.unicode
+
+    def update_cursor(self):
+        now = pygame.time.get_ticks()
+        if now - self.cursor_timer > self.cursor_interval:
+            self.cursor_visible = not self.cursor_visible
+            self.cursor_timer = now
 
     def draw(self, screen):
         # ציור התיבה
@@ -222,6 +237,30 @@ class InputBox:
 
         txt_surf = self.font.render(display_text, True, COLOR_TEXT if self.text else (100, 100, 100))
         screen.blit(txt_surf, (self.rect.x + 10, self.rect.y + 5))
+        # update cursor
+        self.update_cursor()
+
+        # cursor draw
+        if self.active and self.cursor_visible and self.text:
+            ascent = self.font.get_ascent()
+            descent = self.font.get_descent()
+            text_height = ascent + descent
+
+            # אופקי (נשאר אותו דבר)
+            cursor_x = self.rect.x + 10 + self.font.size(display_text)[0]
+
+            # אנכי (המרכוז החדש)
+            cursor_y = self.rect.y + (self.rect.height - text_height) // 2
+
+            cursor_height = text_height
+
+            pygame.draw.line(
+                screen,
+                COLOR_TEXT,
+                (cursor_x, cursor_y),
+                (cursor_x, cursor_y + cursor_height),
+                2
+            )
 # -------- LOGIN SCREEN -------- #
 
 
@@ -448,8 +487,8 @@ class ClientThread(threading.Thread):
                 if tick_id != -1 and tick_id <= self.last_board_id:
                     return
                 # 2ב. מניעת קפיצה בהתחלה: אם זה הטיק הראשון שאנחנו מקבלים אי פעם
-                if self.last_board_id == -1:
-                    self.last_board_id = tick_id - 1
+                #if self.last_board_id == -1:
+                 #   self.last_board_id = tick_id - 1
                 # 2ג. יש לנו חור! חסרות חבילות
                 if tick_id > self.last_board_id + 1:
                     missing_ticks = tick_id - self.last_board_id - 1
