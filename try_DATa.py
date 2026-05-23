@@ -3,6 +3,7 @@
 import threading
 import random
 from PIL import Image
+# from collections import defaultdict
 
 opposites = {"U": "D", "D": "U", "L": "R", "R": "L"}
 BOARD_HEIGHT = 100
@@ -55,6 +56,18 @@ class SpatialGrid:
     def remove_point(self, x, y, kind, player, ticket):
         cell = self.get_cell(x, y)
         if cell in self.grid:
+            target = (x, y, kind, player, ticket)
+            self.grid[cell].discard(target)
+            if kind == APPLE:
+                self.fruits.discard((x, y))
+            elif kind == COIN:
+                self.coins.discard((x, y))
+            if not self.grid[cell]:
+                del self.grid[cell]
+    """
+    def remove_point(self, x, y, kind, player, ticket):
+        cell = self.get_cell(x, y)
+        if cell in self.grid:
             self.grid[cell] = {p for p in self.grid[cell] if
                                not (p[0] == x and p[1] == y and p[2] == kind and p[3] == player and p[4] == ticket)}
             if kind == APPLE:
@@ -63,7 +76,7 @@ class SpatialGrid:
                 self.coins.discard((x, y))
             if not self.grid[cell]:
                 del self.grid[cell]
-
+    """
     def get_point_value(self, x, y, hardcore=False):
         safe_radius = 2 if hardcore else 0
         for dx in range(-safe_radius, safe_radius + 1):
@@ -171,7 +184,7 @@ class HoldPlayersData:
         if self.fruits_num < MAX_FRUITS or force_spawn:
             self._object_add(x, y, APPLE, None, val)
             self.fruits_num += 1
-            self.fruit_to_tick[(x,y)] = int(self.cur_tick)
+            self.fruit_to_tick[(x, y)] = int(self.cur_tick)
         else:
             self.board_is_full_A = True
 
@@ -436,7 +449,7 @@ class HoldPlayersData:
                         self.waiting_players.append((player, bot))
         return False, None
 
-    def _cleanup_unseen_apples_fast(self):
+    def _cleanup_unseen_apples_fast(self, amount=10):
         count = 0
         visible_cells = set()
         for hx, hy in self.live_heads_pos.values():
@@ -455,6 +468,8 @@ class HoldPlayersData:
                             count += 1
                             self._remove_exist_apple(ax, ay, ticket)  #
                             break
+            if count >= amount:
+                break
         print(count ,"apples cleaned!")
 
     def _cleanup_unseen_coins_fast(self):
@@ -620,22 +635,29 @@ class HoldPlayersData:
     def _snake_died(self, snake):   # game_lock needed when calling
         body = self.in_game_players[snake]["body"]
         count = 1
+        dropped_items_pos = set()
         for x_y in body:
             if count != 1:
                 self._object_remove(x_y[0], x_y[1], SNAKE_BODY, snake, x_y[2])
             else:
                 self._object_remove(x_y[0], x_y[1], SNAKE_HEAD, snake, x_y[2])
             # think of better way
-            if random.random() > 0.40:
-                val = self.create_better_fruit_value()
-                self._spawn_apple(x_y[0], x_y[1], val, force_spawn=True)
-            elif random.random() > 0.80:
-                self._spawn_coin(x_y[0], x_y[1], force_spawn=True)
-                if self.waiting_coins_count > 0:
-                    if random.random() > 0.35:
-                        self.waiting_coins_count -= 1
+            pos = (x_y[0], x_y[1])
+            r = random.random()
+            if pos not in dropped_items_pos:
+                if r < 0.60:
+                    val = self.create_better_fruit_value()
+                    self._spawn_apple(x_y[0], x_y[1], val, force_spawn=True)
+                    dropped_items_pos.add(pos)
+                elif r > 0.90:
+                    self._spawn_coin(x_y[0], x_y[1], force_spawn=True)
+                    dropped_items_pos.add(pos)
+                    if self.waiting_coins_count > 0:
+                        if random.random() > 0.35:
+                            self.waiting_coins_count -= 1
 
             count += 1
+        self.player_to_boost.pop(snake, None)
         self.live_heads_pos.pop(snake, None)
         self.in_game_players.pop(snake, None)
         self.died_snakes.append(str(snake.tid))
@@ -651,6 +673,7 @@ class HoldPlayersData:
                 self.changed = True
             # 2ב: אם זה בוט, מכניסים אותו בחזרה בצורה מוגנת!
             if is_bot:
+                self.player_to_coin.pop(snake, None)
                 snake.tid = self.newest_bot - 1
                 self.newest_bot = int(snake.tid)
                 self.waiting_players.append((snake, True))
