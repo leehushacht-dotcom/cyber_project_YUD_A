@@ -107,6 +107,7 @@ RECV_SIZE = 1024
 UDP_RECV_SIZE = 65535
 EWOULDBLOCK = 10035
 BROADCAST_TIME = 0.05
+BOT_AMOUNT = 8
 
 STATE_HANDSHAKE = 0
 STATE_AUTH = 1
@@ -125,7 +126,7 @@ ALLOWED_UDP = {
     STATE_GAME: ["DIR", "INIT"]
 }
 
-BOTS_NAMES = ["bob", "david", "rahel", "vladimir", "yona"]
+BOTS_NAMES = ["bob", "david", "rahel", "vladimir", "yona", "john", "jordan", "guy"]
 
 ERROR_DICT = {
     "003": "login failed",
@@ -355,17 +356,6 @@ class HandleClientUDP(threading.Thread):
                 del self.addr_to_tid[addr_to_remove]
             self.udp_clients.pop(str_tid, None)
             self.tid_to_ID.pop(str_tid, None)
-
-        """
-        str_tid = str(tid)
-        with self.server.lock:
-            if str_tid in self.udp_clients:
-                addr = self.udp_clients[str_tid]
-                if addr in self.addr_to_tid:
-                    del self.addr_to_tid[addr]
-                del self.udp_clients[str_tid]
-            if str_tid in self.tid_to_ID:
-                del self.tid_to_ID[str_tid]"""
 
     def send_data(self, data_dict, addr):
         try:
@@ -765,7 +755,7 @@ class Server:
         udp_history = {}
         HISTORY_MAX_SIZE = 5
 
-        for i in range(5):
+        for i in range(BOT_AMOUNT):
             bot = BotClient(-1 * (i + 1))
             self.players_manager.add_new_player_to_game(bot, bot=True)
             color = [0, 0, 0]

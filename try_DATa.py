@@ -110,7 +110,7 @@ class SpatialGrid:
             for dy in [-1, 0, 1]:
                 cell = (cell_x + dx, cell_y + dy)
                 if cell in self.grid:
-                    points.extend(list(self.grid[cell]))
+                    points.extend(self.grid[cell])
         return points
 
     def is_cell_free(self, x, y):
@@ -135,6 +135,7 @@ class SpatialGrid:
 
 class HoldPlayersData:
     def __init__(self):
+        self.flowers = set()
         self.cur_tick = 0
         self.changed = False
         self.newest_bot = None
@@ -213,6 +214,10 @@ class HoldPlayersData:
     def spawn_water(self, x, y):
         with self.game_lock:
             self.GRID.add_water(x, y)
+
+    def spawn_flower(self, x, y):
+        with self.game_lock:
+            self.flowers.add((x, y))
     """
     def build_fruits_and_coins_board(self):  # improve create logic, *also in spawn after eating(other funcs)
         turn = 1
@@ -259,6 +264,8 @@ class HoldPlayersData:
         print(f"Board initialized with {items_spawned} items.")
 
     def load_map_from_image(self, image_path="base_map.png"):
+        if random.random() > 0.5:
+            image_path = "special_map.png"
         img = Image.open(image_path).convert('RGB')
         width, height = img.size
         for x in range(width):
@@ -268,6 +275,8 @@ class HoldPlayersData:
                     self.spawn_wall(x, y)
                 elif r == 255 and g == 255 and b == 255:
                     self.spawn_water(x, y)
+                elif r == 0 and g == 0 and b == 255:
+                    self.spawn_flower(x, y)
 
     def _find_safe_spawn(self, min_dist=GOOD_APPLE_VALUE, max_attempts=10, direction=False):
         for _ in range(max_attempts):
@@ -351,18 +360,19 @@ class HoldPlayersData:
     def move_all_players(self, server_tick):
         self.cur_tick = server_tick
         print(self.fruits_num, "|", self.coins_num)
-        if self.board_is_full_A:
-            if random.random() > 0.25:
-                print("cleaning!")
-                self._cleanup_unseen_apples_fast()
-                self.board_is_full_A = False
-        if self.board_is_full_C:
-            if random.random() > 0.25:
-                print("cleaning!")
-                self._clean_old_coins()
-                self.board_is_full_C = False
+
         self.update_bots(server_tick)
         with self.game_lock:
+            if self.board_is_full_A:
+                if random.random() > 0.25:
+                    print("cleaning!")
+                    self._cleanup_unseen_apples_fast()
+                    self.board_is_full_A = False
+            if self.board_is_full_C:
+                if random.random() > 0.25:
+                    print("cleaning!")
+                    self._clean_old_coins()
+                    self.board_is_full_C = False
             moving_this_tick = []
             with self.users_lock:
                 boosts = self.player_to_boost.copy()
@@ -449,11 +459,13 @@ class HoldPlayersData:
                         self.waiting_players.append((player, bot))
         return False, None
 
-    def _cleanup_unseen_apples_fast(self, amount=10):
+    def _cleanup_unseen_apples_fast(self, amount=10, hard_core=False):
+        # hard core is for crucial situation like more than 1000 apples on board then need to reduce the radius frm head
         count = 0
         visible_cells = set()
         for hx, hy in self.live_heads_pos.values():
             head_cell_x, head_cell_y = self.GRID.get_cell(hx, hy)
+
             for cx in range(head_cell_x - 3, head_cell_x + 4):
                 for cy in range(head_cell_y - 3, head_cell_y + 4):
                     visible_cells.add((cx, cy))
@@ -513,7 +525,6 @@ class HoldPlayersData:
             if count <= 0:
                 break
 
-
     def get_full_sync(self, new_map=False):  # for new players 1 time, next time use self.get_world_delta()
         with self.game_lock:
             with self.users_lock:
@@ -539,6 +550,7 @@ class HoldPlayersData:
                 if new_map:
                     msg["walls"] = list(self.GRID.wall)
                     msg["water"] = list(self.GRID.water)
+                    msg["flowers"] = list(self.flowers)
                 return msg
 
     def _move_player_by_direction(self, snake, is_boosting):
@@ -632,7 +644,7 @@ class HoldPlayersData:
                     return val
         return 0
 
-    def _snake_died(self, snake):   # game_lock needed when calling
+    def _snake_died(self, snake):  # game_lock needed when calling
         body = self.in_game_players[snake]["body"]
         count = 1
         dropped_items_pos = set()

@@ -316,6 +316,7 @@ class ClientThread(threading.Thread):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.state = STATE_HANDSHAKE
         self.my_amount_of_coins = 0
+        self.last_coins = 0
 
         self.UDP_port = None
         self.UDP_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -341,8 +342,10 @@ class ClientThread(threading.Thread):
         self.board_width = -1
         self.walls = []
         self.water = []
+        self.flowers = []
         self.tid_to_color = {}
         self.tid_to_username = {}
+        self.known_usernames = {}
 
         self.camera_x = -1
         self.camera_y = -1
@@ -357,6 +360,7 @@ class ClientThread(threading.Thread):
         # ---------------------------------
         self.target_snakes = {}  # רק הנחשים, כבר ממוינים!
         # -------------------------
+        self.recent_deaths = []
 
         self.grid = {}
         self.alive = True
@@ -454,13 +458,16 @@ class ClientThread(threading.Thread):
             print("died in TCP")
             # מושכים את רשימת המתים ישירות מה-payload
             died = payload.get("died", [])
+
             for p_id_str in died:
+                user_name = self.known_usernames.get(str(p_id_str), f"Player {p_id_str}")
+                if user_name not in self.recent_deaths:
+                    self.recent_deaths.append(user_name)
                 if p_id_str in self.head_history:
                     print("in HEAD HISTORY")
                     del self.head_history[p_id_str]
                 if p_id_str in self.visual_snakes:
                     print("in VISUAL SNAKES")
-                    #print(self.visual_snakes[p_id_str])
                     del self.visual_snakes[p_id_str]
 
             if str(self.tid) in died:
@@ -534,6 +541,8 @@ class ClientThread(threading.Thread):
                     self.grid[(point[0], point[1], point[4])] = (point[2], point[3])
                 if "usernames" in delta:
                     self.tid_to_username = delta.get("usernames")
+                    self.known_usernames.update(self.tid_to_username)
+                    print(self.tid_to_username)
                 if tick_id != -1:
                     self.last_board_id = tick_id
                 if self.pending_udp_updates:
@@ -551,27 +560,11 @@ class ClientThread(threading.Thread):
                             self.last_board_id = p_id
                     print(f"Fast-forward complete. New last_board_id: {self.last_board_id}")
 
-                """
-                # עכשיו מריצים את כל מה שהצטבר בתור בזמן שחיכינו (Fast Forward)
-                if len(self.pending_udp_updates) > 0:
-                    self.pending_udp_updates.sort(key=lambda x: x.get("ID", -1))
-                    updates_to_process = self.pending_udp_updates.copy()
-                    self.pending_udp_updates.clear()
-                    for pending_payload in updates_to_process:
-                        if pending_payload.get("ID", -1) > self.last_board_id:
-                            while self.pending_udp_updates:
-                                next_update = self.pending_udp_updates.pop(0)
-                                if next_update.get("ID", -1) > self.last_board_id:
-                                    delta = next_update.get("delta", {})
-                                    self.change_graphics(delta.get("remove", []), delta.get("add", []))
-                                    self.last_board_id = next_update.get("ID")
-
-
-                          #  self.board_f(pending_payload)  # recursive call with new udp msg
-                """
             else:
                 if "usernames" in delta:
                     self.tid_to_username = delta.get("usernames")
+                    self.known_usernames.update(self.tid_to_username)
+                    print("udp,", self.tid_to_username)
                 # פעולה רגילה - עדכון דלתא
                 self.change_graphics(delta.get("remove", []), delta.get("add", []))
             # -------------------------------------------------------------
@@ -583,64 +576,6 @@ class ClientThread(threading.Thread):
                 self.tid_to_color = delta.get("players_color")
             self.leaders = delta.get("leaders")
             self.rebuild_optimized_data()
-    """
-    def board_f(self, payload):
-        with self.lock:
-            tick_id = payload.get("ID", -1)
-            #print(f"DEBUG: Got board with ID {tick_id}. My last_board_id is {self.last_board_id}")  # <--- הוסף את זה!
-            delta = payload.get("delta")
-            is_full_sync = "full_grid" in delta
-            history = payload.get("history", {})
-            if not is_full_sync:
-                if tick_id != -1 and tick_id <= self.last_board_id:
-                    return
-                if self.last_board_id != -1 and tick_id > self.last_board_id + 1:
-                    if not self.asking_server_for_sync:
-                        print(f"Packet loss! Expected {self.last_board_id + 1}, got {tick_id}. Requesting SYNC.")
-                        self.asking_server_for_sync = True  # נועלים את הדלת (מונע ספאם)
-                        self.send_to_server(self.build_message("SYNC_ME"))
-                    else:
-                        print("asking for sync!!!!!!!!!!!!!!!")
-                    return
-            else:
-                print("tcp packet")
-                # פאקטה של TCP (סנכרון): נקבל גם אם היא שווה לזמן הנוכחי (כי היא משלימה את ה-UDP)
-                # נזרוק רק אם היא ממש ישנה (איחרה בטיק שלם לפחות)
-                if tick_id != -1 and tick_id < self.last_board_id:
-                    return
-            if tick_id != -1:
-                self.last_board_id = tick_id
-            if is_full_sync:
-                print("update with tcp")
-                self.asking_server_for_sync = False
-                self.grid = {}
-                for point in delta["full_grid"]:
-                    self.grid[(point[0], point[1], point[4])] = (point[2], point[3])
-                if "usernames" in delta:
-                    self.tid_to_username = delta.get("usernames")
-                    # --- התיקון כאן! ---
-                    # אם המדינה היא LOBBY ואנחנו רואים את עצמנו בלוח - עוברים למשחק
-                    #if self.state == STATE_LOBBY and str(self.tid) in self.tid_to_username:
-                    #   print("Found myself in TCP board! Moving to STATE_GAME")
-                    #  self.state = STATE_GAME
-            else:
-                self.change_graphics(delta.get("remove", []), delta.get("add", []))
-            #died = delta.get("died", [])
-            #for p_id_str in died:
-            #    if p_id_str in self.head_history:
-            #        del self.head_history[p_id_str]
-            #    if p_id_str in self.visual_snakes:
-            #        del self.visual_snakes[p_id_str]
-            if "length" in delta:
-                self.snake_lengths = delta.get("length")
-            #if str(self.tid) in died:
-            #    self.alive = False
-            if "players_color" in delta:
-                self.tid_to_color = delta.get("players_color")
-            self.leaders = delta.get("leaders")
-            # הקסם שמתקן הכל
-            self.rebuild_optimized_data()
-    """
 
     def pub_key_get_f(self, payload):
         public_key = payload.get("key")
@@ -717,6 +652,7 @@ class ClientThread(threading.Thread):
             if "walls" in sync:  # also water
                 self.walls = sync.get("walls", [])
                 self.water = sync.get("water", [])
+                self.flowers = sync.get("flowers", [])
                 # create Surface
 
             for point in sync.get("full_grid"):
@@ -728,6 +664,7 @@ class ClientThread(threading.Thread):
             in_game = False
             if "usernames" in sync:
                 self.tid_to_username = sync.get("usernames")
+                self.known_usernames.update(self.tid_to_username)
                 if str(self.tid) in self.tid_to_username:
                     in_game = True
             # מעדכן את כל הנחשים ומוצא את המצלמה
@@ -744,7 +681,9 @@ class ClientThread(threading.Thread):
 
     def coins_f(self, payload):
         coins_amount = payload.get("amount")
+
         if coins_amount:
+            self.last_coins = coins_amount - self.my_amount_of_coins
             self.my_amount_of_coins = coins_amount
 
     def ack_f(self, payload):
@@ -803,6 +742,8 @@ class ClientThread(threading.Thread):
         self.walls = []
         self.water = []
         self.tid_to_color = {}
+        self.known_usernames = {}
+        self.recent_deaths = []
         self.camera_x = -1
         self.camera_y = -1
         self.visual_camera_x = -1.0
@@ -1149,12 +1090,47 @@ def prepare_beveled_metal_surface():
     return surf
 
 
+def prepare_flower_surface():
+    surf = pygame.Surface((15, 15))
+
+    # פלטת צבעים חדשה: דשא אמרלד עשיר שמשתלב נהדר עם כחול/תכלת של מים
+    colors = {
+        '1': (15, 55, 45),  # צל עמוק עם נגיעה כחלחלה (תחושה של אדמה לחה)
+        '2': (30, 100, 60),  # בסיס הדשא - ירוק אמרלד עשיר וקריר
+        '3': (55, 160, 80),  # עלי דשא רעננים
+        '4': (95, 210, 110)  # הברקות אור רכות (ירוק-מנטה במקום צהוב)
+    }
+
+    # מפת הפיקסלים 15x15
+    pixel_map = [
+        "222122222122222",
+        "233221233221222",
+        "134322234322332",
+        "223221223221343",
+        "212233222212232",
+        "222134322223221",
+        "222223221234322",
+        "123322233223221",
+        "213432134322222",
+        "222322223221332",
+        "332221222212343",
+        "343222332222232",
+        "232211343212221",
+        "222222232223322",
+        "212222222113432"
+    ]
+
+    # ציור הגריד פיקסל אחר פיקסל
+    for y, row in enumerate(pixel_map):
+        for x, char in enumerate(row):
+            pygame.draw.rect(surf, colors[char], (x, y, 1, 1))
+
+    return surf
+
 def prepare_rock_wall_surface():
     surf = pygame.Surface((BLOCK_SIZE, BLOCK_SIZE))
-
     # צבע רקע - זה יהיה הצבע של החריצים/המלט בין הסלעים (שחור-אפור כהה)
     surf.fill((25, 25, 25))
-
     # פלטת גוונים של אבנים (שילוב של אפור, מעט כחול ומעט חום)
     rock1 = (105, 105, 110)
     rock2 = (85, 85, 90)
@@ -1225,6 +1201,7 @@ BACKGROUND_TILE = prepare_dirt_surface() # או כל אחד אחר שבחרת
 # אל תשכח לעדכן את המשתנה למעלה:
 WATER_SURFACE = prepare_deep_ice_surface()
 WALL_SURFACE = prepare_rock_wall_surface()
+FLOWER_SURFACE = prepare_flower_surface()
 
 APPLE_SURFACE = prepare_apple_surface()
 BLUE_APPLE = prepare_blue_apple_surface()
@@ -1242,120 +1219,6 @@ LEADERBOARD_OVERLAY.fill((0, 0, 0, 160))
 
 MINIMAP_OVERLAY = pygame.Surface((100, 100), pygame.SRCALPHA)
 MINIMAP_OVERLAY.fill((0, 0, 0, 120))
-
-"""
-def update_and_draw_world1(cli_obj, screen, bg_surface, lerp_factor):
-
-    # יצירת מילון למעקב אחרי הגדילה הויזואלית (נוצר פעם אחת עצמאית)
-    if not hasattr(cli_obj, 'visual_lengths'):
-        cli_obj.visual_lengths = {}
-
-    with cli_obj.lock:
-        # only players (tids) that alive (active)
-        active_tids = list(cli_obj.target_snakes.keys())
-
-        if cli_obj.camera_x != -1:
-            cli_obj.visual_camera_x += (cli_obj.camera_x - cli_obj.visual_camera_x) * lerp_factor
-            cli_obj.visual_camera_y += (cli_obj.camera_y - cli_obj.visual_camera_y) * lerp_factor
-        # this for clean lists from dead snakes --> not active
-        # --------------------------
-        cli_obj.visual_snakes = {k: v for k, v in cli_obj.visual_snakes.items() if k in active_tids}
-        cli_obj.head_history = {k: v for k, v in cli_obj.head_history.items() if k in active_tids}
-        cli_obj.visual_lengths = {k: v for k, v in cli_obj.visual_lengths.items() if k in active_tids}
-        # --------------------------
-
-        for p_id_str, target_list in list(cli_obj.target_snakes.items()):
-            if not target_list:  # (x,y)
-                continue
-
-            if p_id_str not in cli_obj.visual_snakes:
-                cli_obj.visual_snakes[p_id_str] = [list(p) for p in target_list]
-
-            v_snake = cli_obj.visual_snakes[p_id_str]  # (x,y)...
-
-            # --- טיפול בשינויי אורך ---
-            # אם השרת הוסיף חוליות (אכלנו), נוסיף אותן במיקום של הזנב הנוכחי
-            while len(v_snake) < len(target_list):
-                v_snake.append(list(v_snake[-1]))
-
-            # אם השרת הוריד חוליות (בוסט/מוות), נוריד אותן מהסוף
-            if len(v_snake) > len(target_list):
-                v_snake = v_snake[:len(target_list)]
-
-            # --- האנימציה האמיתית ---
-            # כל חוליה רודפת אחרי המיקום שלה בשרת (target_list)
-            for i in range(len(v_snake)):
-                target_x, target_y = target_list[i]
-                v_snake[i][0] += (target_x - v_snake[i][0]) * lerp_factor
-                v_snake[i][1] += (target_y - v_snake[i][1]) * lerp_factor
-
-            cli_obj.visual_snakes[p_id_str] = v_snake  # new places closer to target
-
-        offset_x = screen.get_width() // 2 - (cli_obj.visual_camera_x * BLOCK_SIZE)
-        offset_y = screen.get_height() // 2 - (cli_obj.visual_camera_y * BLOCK_SIZE)
-
-    # --- שלב הציור ---
-    screen.blit(bg_surface, (offset_x, offset_y))
-
-    with cli_obj.lock:
-        display_new_board(cli_obj.grid, cli_obj.tid, cli_obj.tid_to_color, screen, cli_obj, offset_x, offset_y)
-
-        for p_id_str, segments in list(cli_obj.visual_snakes.items()):  # tid, (x,y)
-            color_list = cli_obj.tid_to_color.get(p_id_str)
-            if not color_list:
-                continue
-
-            head_color = (color_list[0][0], color_list[0][1], color_list[0][2])
-
-            for i in range(len(segments) - 1, -1, -1):  # start from tail
-                v_x, v_y = segments[i]  # x, y
-                screen_x = screen.get_width() // 2 - (cli_obj.visual_camera_x * BLOCK_SIZE) + (v_x * BLOCK_SIZE)
-                screen_y = screen.get_height() // 2 - (cli_obj.visual_camera_y * BLOCK_SIZE) + (v_y * BLOCK_SIZE)
-
-                if -BLOCK_SIZE * 2 < screen_x < screen.get_width() + BLOCK_SIZE * 2 and -BLOCK_SIZE * 2 < screen_y < screen.get_height() + BLOCK_SIZE * 2:
-                    center = (int(screen_x + BLOCK_SIZE / 2), int(screen_y + BLOCK_SIZE / 2))
-                    base_radius = int(BLOCK_SIZE / 1.4)
-
-                    if i == 0:
-                        # --- ציור השם מעל הנחש ---
-                        # שולפים את השם מהמילון (עם הגנה)
-                        player_name = cli_obj.tid_to_username.get(p_id_str, f"Player {p_id_str}")
-                        # יוצרים את הטקסט (משתמשים בפונט הגלובלי)
-                        name_surf = GLOBAL_FONT.render(player_name, True, (255, 255, 255))
-                        # ממקמים את הטקסט בדיוק באמצע ומעל הראש
-                        name_x = center[0] - name_surf.get_width() // 2
-                        name_y = center[1] - base_radius - 20
-                        screen.blit(name_surf, (name_x, name_y))
-
-                        pygame.draw.circle(screen, (30, 30, 30), center, base_radius + 2)
-                        pygame.draw.circle(screen, head_color, center, base_radius + 1)
-                        dx, dy = 1, 0
-                        if len(segments) > 1:
-                            nx, ny = segments[1]
-                            dx, dy = v_x - nx, v_y - ny
-                            length = (dx ** 2 + dy ** 2) ** 0.5
-                            if length != 0:
-                                dx, dy = dx / length, dy / length
-
-                        eye1_pos = (center[0] + int(dx * 4 - dy * 5), center[1] + int(dy * 4 + dx * 5))
-                        eye2_pos = (center[0] + int(dx * 4 + dy * 5), center[1] + int(dy * 4 - dx * 5))
-                        pupil1_pos = (center[0] + int(dx * 6 - dy * 5), center[1] + int(dy * 6 + dx * 5))
-                        pupil2_pos = (center[0] + int(dx * 6 + dy * 5), center[1] + int(dy * 6 - dx * 5))
-
-                        pygame.draw.circle(screen, (255, 255, 255), eye1_pos, 4)
-                        pygame.draw.circle(screen, (255, 255, 255), eye2_pos, 4)
-                        pygame.draw.circle(screen, (0, 0, 0), pupil1_pos, 2)
-                        pygame.draw.circle(screen, (0, 0, 0), pupil2_pos, 2)
-                    else:
-                        body_color = color_list[i % len(color_list)]
-                        darker_color = (
-                        max(0, body_color[0] - 60), max(0, body_color[1] - 60), max(0, body_color[2] - 60))
-                        pygame.draw.circle(screen, darker_color, center, base_radius)
-                        pygame.draw.circle(screen, body_color, center, base_radius - 2)
-
-    draw_leaderboard(screen, cli_obj.leaders, cli_obj.tid_to_color, cli_obj.tid, cli_obj.snake_lengths, cli_obj.tid_to_username)
-    draw_minimap(screen, cli_obj)
-"""
 
 
 def update_and_draw_world1(cli_obj, screen, bg_surface, lerp_factor):
@@ -1487,6 +1350,35 @@ def update_and_draw_world1(cli_obj, screen, bg_surface, lerp_factor):
     draw_minimap(screen, cli_obj, local_target_snakes)
 
 
+def draw_dead(cli_obj, screen, font_death, death_notifications):
+
+    # ==========================================
+    # ציור ועדכון הטקסטים המרחפים
+    # ==========================================
+    # 1. קליטת מתים חדשים מהתקשורת
+    # בתוך ה-while של ה-cli_game_loop:
+
+    # 1. בודקים אם יש מתים חדשים מהתקשורת
+    if cli_obj.recent_deaths:
+        for dead_name in cli_obj.recent_deaths:
+            text_surf = font_death.render(f"{dead_name} died!", True, (255, 255, 255)).convert_alpha()
+            death_notifications.append([text_surf, 9, 500, 255.0])
+
+        cli_obj.recent_deaths.clear()
+
+    # 2. אנימציה לכל טקסט פעיל
+    for note in death_notifications[:]:
+        note[2] -= 1.0  # מזיז את הטקסט למעלה
+        note[3] -= 3.0  # מוריד שקיפות (מהירות ההיעלמות)
+
+        if note[3] <= 0:
+            death_notifications.remove(note)  # נעלם לגמרי - נמחק מהרשימה
+        else:
+            note[0].set_alpha(int(note[3]))
+            screen.blit(note[0], (note[1], int(note[2])))
+    # ==========================================
+
+
 def cli_game_loop(cli_obj):
     # cli_obj.send_to_server_UDP(cli_obj.build_message("INIT", tid=cli_obj.tid))
     width = cli_obj.board_width * BLOCK_SIZE
@@ -1509,6 +1401,9 @@ def cli_game_loop(cli_obj):
 
     for wx, wy in cli_obj.water:
         bg_surface.blit(WATER_SURFACE, (wx * BLOCK_SIZE, wy * BLOCK_SIZE))
+
+    for wx, wy in cli_obj.flowers:
+        bg_surface.blit(FLOWER_SURFACE, (wx * BLOCK_SIZE, wy * BLOCK_SIZE))
     # ----- create surface ------ #
     msg_id = 1
     lerp_factor = 0.2
@@ -1517,8 +1412,17 @@ def cli_game_loop(cli_obj):
     INTERVAL = 4
     # server_got = False
     times_sent = 0
+
+    # ==========================================
+    # מערכת התראות מוות (Kill Feed)
+    # ==========================================
+    font_death = GLOBAL_FONT#pygame.font.SysFont("Segoe UI", 20)
+    death_notifications = []  # שומר רשימה של [Surface, X, Y, Alpha]
+    # ==========================================
+
     while cli_obj.alive:
         screen.fill((0, 0, 0))
+        # maybe draw here the dead snakes
         update_and_draw_world1(cli_obj, screen, bg_surface, lerp_factor)
         for event in pygame.event.get():  # try to improve it, faster somehow
             if event.type == pygame.QUIT:
@@ -1558,6 +1462,8 @@ def cli_game_loop(cli_obj):
                     current_msg = cli_obj.build_message("DIR", direction=cli_obj.last_direction, ID=msg_id,
                                                         tid=cli_obj.tid, boost=cli_obj.boosting)
                     cli_obj.send_to_server_UDP(current_msg)
+
+        draw_dead(cli_obj, screen, font_death, death_notifications)
         if current_msg and tick_id % INTERVAL == 0 and times_sent < 3:
             times_sent += 1
             cli_obj.send_to_server_UDP(current_msg)
@@ -1613,13 +1519,7 @@ def draw_premium_button(screen, text_surface, rect, base_color, hover_color, mou
 def home_screen(screen, client):
     global COLOR_PACK
     pygame.display.set_caption("SNAKE ONLINE")
-    """
-    try:
-        bg_image = pygame.image.load('background.png').convert()
-        bg_image = pygame.transform.scale(bg_image, (600, 600))
-    except Exception as e:
-        bg_image = None
-    """
+
     font_logo = pygame.font.SysFont("Segoe UI", 65, bold=True)
     font_play = pygame.font.SysFont("Arial Black", 45)
     font_button = pygame.font.SysFont(None, 40)
@@ -1674,56 +1574,62 @@ def home_screen(screen, client):
 
     clock = pygame.time.Clock()
     waiting_for_user = True
-    """
-
-    # ----------------- background ----------------------------
-    # --- הכנת רקע הזירה ללובי (מפת דמו ענקית) ---
-    DEMO_MAP_SIZE = 900
-    lobby_bg = pygame.Surface((DEMO_MAP_SIZE, DEMO_MAP_SIZE))
-    for x in range(0, DEMO_MAP_SIZE, BLOCK_SIZE):
-        for y in range(0, DEMO_MAP_SIZE, BLOCK_SIZE):
-            lobby_bg.blit(BACKGROUND_TILE, (x, y))
-            # נפזר קצת קוצים ומים אקראיים כדי שייראה כמו זירה אמיתית
-            rand_val = random.random()
-            if rand_val < 0.04:
-                lobby_bg.blit(WALL_SURFACE, (x, y))
-            elif rand_val < 0.07:
-                lobby_bg.blit(WATER_SURFACE, (x, y))
-
-    pan_x, pan_y = 0.0, 0.0  # משתנים למעקב אחרי תנועת המצלמה
-    # ----------------- background ----------------------------
-    """
     bg_snakes = [BgSnake(600, 600) for _ in range(15)]
-
+    # here make coin add animation?
+    # --- הכנה לאנימציית שאיבת המטבעות ---
+    flying_coins = []  # רשימה שתשמור כל מטבע: [current_x, current_y, delay_frames]
+    TARGET_X, TARGET_Y = 20.0, 30.0  # המיקום (בערך) של סמל המטבע בצד שמאל למעלה
+    # ------------------------------------
     while waiting_for_user:
         screen.fill(COLOR_BG)
         for s in bg_snakes:
             s.update()
             s.draw(screen)
-        """
-        # ----------------- background ----------------------------
-        # --- הנעת רקע הזירה באלכסון (Infinite Pan) ---
-        pan_speed = 0.4  # מהירות גלילה איטית וסינמטית
-        pan_x = (pan_x - pan_speed) % DEMO_MAP_SIZE
-        pan_y = (pan_y - pan_speed) % DEMO_MAP_SIZE
 
-        # כדי ליצור גלילה אינסופית בלי "חתכים", מציירים את המשטח 4 פעמים
-        screen.blit(lobby_bg, (pan_x, pan_y))
-        screen.blit(lobby_bg, (pan_x - DEMO_MAP_SIZE, pan_y))
-        screen.blit(lobby_bg, (pan_x, pan_y - DEMO_MAP_SIZE))
-        screen.blit(lobby_bg, (pan_x - DEMO_MAP_SIZE, pan_y - DEMO_MAP_SIZE))
-
-        # --- אפקט זכוכית כהה ---
-        # שמים משטח שחור שקוף ב-85% מעל המפה כדי שהטקסטים והנחש יבלטו
-        dark_overlay = pygame.Surface((600, 600), pygame.SRCALPHA)
-        dark_overlay.fill((15, 15, 20, 100))  # גוון מעט כחלחל-שחור להרגשה עמוקה
-        screen.blit(dark_overlay, (0, 0))
-        # ----------------- background ----------------------------
-        """
         screen.blit(text_logo, text_logo_rect)
         screen.blit(COIN_SURFACE_FOR_SHOW, (10, 20))
         coin_text = font_button.render(f" {client.my_amount_of_coins}", True, (255, 215, 0))
         screen.blit(coin_text, (40, 20))
+
+        # ==========================================
+        # 1. טריגר - יצירת הענן של המטבעות
+        # ==========================================
+        if client.last_coins > 0:
+            # אם קיבלנו המון כסף (למשל 100), נצייר מקסימום 15 כדי לא להעמיס גרפית
+            num_coins_to_show = min(client.last_coins, 15)
+
+            for i in range(num_coins_to_show):
+                # מפזרים אותם באזור המרכז של המסך בצורה אקראית
+                start_x = 300 + random.randint(-100, 100)
+                start_y = 300 + random.randint(-100, 100)
+
+                # כל מטבע מקבל "דיליי" קטן כדי שהם יעופו בשרשרת (זרם) ולא כגוש אחד
+                delay = i * 3
+                flying_coins.append([float(start_x), float(start_y), delay])
+
+            client.last_coins = 0  # מאפסים מיד כדי שלא ייווצר ענן חדש כל פריים
+
+        # ==========================================
+        # 2. עדכון וציור של המטבעות המעופפים (Lerp)
+        # ==========================================
+        for f_coin in flying_coins[:]:
+            if f_coin[2] > 0:
+                # המטבע מחכה לתורו לעוף - בינתיים רק נצייר אותו מרחף במקום
+                f_coin[2] -= 1
+                screen.blit(COIN_SURFACE_FOR_SHOW, (int(f_coin[0]), int(f_coin[1])))
+            else:
+                # תעופה! (Lerp לכיוון היעד בפינה השמאלית העליונה)
+                speed = 0.15  # מהירות השאיבה (מתחיל מהר ומאט ככל שמתקרב)
+                f_coin[0] += (TARGET_X - f_coin[0]) * speed
+                f_coin[1] += (TARGET_Y - f_coin[1]) * speed
+
+                screen.blit(COIN_SURFACE_FOR_SHOW, (int(f_coin[0]), int(f_coin[1])))
+
+                # אם המטבע הגיע קרוב מאוד ליעד (מרחק קטן מ-10 פיקסלים) - הוא נבלע ונעלם
+                dist = math.hypot(TARGET_X - f_coin[0], TARGET_Y - f_coin[1])
+                if dist < 10:
+                    flying_coins.remove(f_coin)
+        # ==========================================
 
         if not show_color_picker and not show_shop:
             # --- מסך ראשי ---
@@ -1981,6 +1887,16 @@ def home_screen(screen, client):
     #print("sending color to server...")
     # שולחים את הרשימה המלאה של הצבעים!
     client.send_to_server(client.build_message("COLOR", color=pattern))
+    # --- הכנת האנימציה (מציירים פעם אחת מחוץ ללולאה!) ---
+    # ניצור משטח שקוף בגודל 100x100
+    spinner_surf = pygame.Surface((100, 100), pygame.SRCALPHA)
+
+    # נצייר עליו את המסלול האפור (עיגול חלול)
+    pygame.draw.circle(spinner_surf, (50, 50, 60), (50, 50), 35, 6)
+
+    # נצייר עליו את קשת הטעינה הירוקה (שליש מעגל)
+    pygame.draw.arc(spinner_surf, (0, 210, 80), pygame.Rect(15, 15, 70, 70), 0, math.radians(120), 6)
+    loading_angle = 0
     while client.state == STATE_LOBBY:
         #print(f"Current State: {client.state}, My TID: {client.tid}, Active Users:")
         for event in pygame.event.get():
@@ -1990,13 +1906,24 @@ def home_screen(screen, client):
                 pygame.quit()
                 raise SystemExit
 
-        # מציירים מסך טעינה במקום לקפוא
-        screen.fill((20, 20, 20))
-        wait_text = font_button.render("Server is full! Waiting for a spot...", True, (255, 200, 0))
-        screen.blit(wait_text, wait_text.get_rect(center=(300, 300)))
+        # רקע כהה ונקי למסך ההמתנה
+        screen.fill((20, 20, 25))
+
+        wait_text = font_button.render("Waiting for a spot...", True, (220, 220, 220))
+        screen.blit(wait_text, wait_text.get_rect(center=(300, 220)))
+
+        # --- הפעלת אנימציית הטעינה ---
+        loading_angle = (loading_angle - 8) % 360  # מסובב בבטחה בתחום של 0-360
+
+        # מסובב את התמונה עצמה (פעולה חלקה ובטוחה שלא קורסת)
+        rotated_spinner = pygame.transform.rotate(spinner_surf, loading_angle)
+
+        # מוודאים שהמרכז נשאר קבוע אחרי הסיבוב
+        spinner_rect = rotated_spinner.get_rect(center=(300, 300))
+        screen.blit(rotated_spinner, spinner_rect)
+
         pygame.display.flip()
         clock.tick(30)
-        #time.sleep(0.05)
     # תיקון קטן: נשמור את הצבעים שבחרנו גם אצלנו מקומית מיד
     client.tid_to_color[str(client.tid)] = pattern
     return client
