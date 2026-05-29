@@ -1,4 +1,4 @@
-"""author: Leehu Shacht"""
+__author__ = "Leehu Shacht"
 import random
 import traceback
 
@@ -8,11 +8,8 @@ from AsyncMessages import AsyncMessages
 from UDP_AsincMessages import UDPAsyncMessages
 from try_DATa import HoldPlayersData
 from USER_DATA_BASE import UserManager
-
 from msg_by_size_snake import TransportData
-# import os
 import time
-# import json
 import base64
 import msgpack
 import secrets
@@ -108,6 +105,7 @@ UDP_RECV_SIZE = 65535
 EWOULDBLOCK = 10035
 BROADCAST_TIME = 0.05
 BOT_AMOUNT = 8
+AUTO_TCP_UPDATE = False
 
 STATE_HANDSHAKE = 0
 STATE_AUTH = 1
@@ -123,7 +121,7 @@ ALLOWED_COMMANDS = {
 
 ALLOWED_UDP = {
     STATE_LOBBY: ["INIT"],
-    STATE_GAME: ["DIR", "INIT"]
+    STATE_GAME: ["DIR"]
 }
 
 BOTS_NAMES = ["bob", "david", "rahel", "vladimir", "yona", "john", "jordan", "guy"]
@@ -133,7 +131,8 @@ ERROR_DICT = {
     "004": "signup failed",
     "005": "Illegal state: action not allowed right now",
     "006": "purchase has failed",
-    "007": "auto login failed"
+    "007": "auto login failed",
+    "009": "key not recognized"
 }
 
 
@@ -162,60 +161,33 @@ class HandleClientUDP(threading.Thread):
                 print(f"CLASS:udp | PROC:run | data:{data} | addr:{addr}")
                 if not data:
                     continue
-                # --- התיקון כאן ---
-                # ננסה להבין אם זה INIT עוד לפני הפענוח
                 is_init_packet = False
                 try:
+                    # INIT sent with no encrypt, so we need to check this
                     temp_data = msgpack.unpackb(data, raw=False)
                     if temp_data.get("cmd") == "INIT":
                         print(f"CLASS:udp | PROC:run | info:got INIT")
                         is_init_packet = True
                 except:
                     pass
-
                 if is_init_packet:
-                    # אם זה INIT, נטפל בו ישירות בלי פענוח
+                    # if we got init msg
                     payload = temp_data.get("payload", {})
                     self.cmd_dict["INIT"](payload, addr)
-                    continue  # ממשיכים לחבילה הבאה
+                    continue
 
                 # here decrypt data
-                data, is_IN, cli_obj = self.deycrept_data_with_AES(data, addr)
-                if data == b"":
+                data, cli_obj = self.deycrept_data_with_AES(data, addr)
+                if not cli_obj or data == b"":
                     continue
-                try:
-                    payload_dict = msgpack.unpackb(data, raw=False)
-                except Exception:
-                    continue  # מידע זבל שלא ניתן לפריקה
-
+                payload_dict = msgpack.unpackb(data, raw=False)
                 cmd = payload_dict.get("cmd")
-                payload = payload_dict.get("payload", {})
-                if not cli_obj:
-                    if cmd == "INIT":
-                        # השרת עוד לא מכיר את הכתובת, אז נשלוף את ה-TID מההודעה עצמה
-                        p_tid = str(payload.get("tid"))
-                        temp_cli_obj = self.server.get_tcp_client_obj(p_tid)
-                        # בודקים אם לשחקן הזה בכלל מותר לעשות INIT עכשיו (State LOBBY או GAME)
-                        if temp_cli_obj:
-                            print(f"CLASS:udp | PROC:run | info:CLI EXIST!")
-                            allowed_for_temp = ALLOWED_UDP.get(temp_cli_obj.state, [])
-                            if "INIT" in allowed_for_temp:
-                                self.cmd_dict["INIT"](payload, addr)
-                        else:
-                            print(f"CLASS:udp | PROC:run | info:CLI NOT EXIST!")
-                    # אם זה לא INIT או שאין לקוח כזה - מתעלמים
-                    continue
-                else:
-                    allowed = ALLOWED_UDP.get(cli_obj.state, [])
-                    cmd = payload_dict.get("cmd")
-                    if cmd in allowed:
-                        if cmd != "INIT" and not is_IN:
-                            continue
-                        self.cmd_dict[cmd](payload_dict.get("payload"), addr)
+                allowed = ALLOWED_UDP.get(cli_obj.state, [])
+                if cmd in allowed and cmd != "INIT":
+                    self.cmd_dict[cmd](payload_dict.get("payload", {}), addr)
+                # send all msgs to all
                 self.send_messages_back()
-            # except ConnectionResetError:
-            # התיקון: ווינדוס זורק את זה כששחקן התנתק. פשוט מתעלמים וממשיכים להאזין!
-            #   pass
+
             except socket.error as err:
                 if err.errno == EWOULDBLOCK or str(err) == "timed out":  # if we use conn.settimeout(x)
                     self.send_messages_back()
@@ -241,7 +213,7 @@ class HandleClientUDP(threading.Thread):
         if addr in self.addr_to_tid.keys():
             tid = self.addr_to_tid.get(addr)
         else:
-            return data, False, None
+            return data, None
         tid = str(tid)
         client_obj = self.server.get_tcp_client_obj(tid)
         if client_obj and client_obj.transport_data.key != "KEY":
@@ -250,11 +222,11 @@ class HandleClientUDP(threading.Thread):
                 ciphertext = data[16:]
                 cipher = AES.new(client_obj.transport_data.key, AES.MODE_CBC, iv)
                 decrypted = unpad(cipher.decrypt(ciphertext), AES.block_size)
-                return decrypted, True, client_obj
+                return decrypted, client_obj
             except Exception as e:
                 print(f"UDP Decryption failed: {e}")
-                return b"", True, None
-        return b"", True, None
+                return b"", None
+        return b"", None
 
     def encrypt_data_with_AES(self, data_bytes, addr):
         with self.udp_lock:
@@ -276,6 +248,7 @@ class HandleClientUDP(threading.Thread):
             return None
 
     def send_messages_back(self):
+        # send all msgs to all
         with self.udp_lock:
             temp = list(self.udp_clients.keys())
         for tid in temp:
@@ -298,8 +271,7 @@ class HandleClientUDP(threading.Thread):
         if not client_obj:
             print(f"CRITICAL: INIT failed, TCP client {p_tid} not found!")
             return
-
-        if client_obj.state not in [STATE_LOBBY, STATE_GAME]:
+        if client_obj.state not in [STATE_LOBBY]:
             print(f"UDP INIT blocked: Client {p_tid} is in state {client_obj.state}")
             return
         str_tid = str(p_tid)
@@ -310,18 +282,17 @@ class HandleClientUDP(threading.Thread):
                 self.server.UDP_async_msg.add_new_player(str_tid, addr)
                 self.tid_to_ID[str_tid] = -1
                 print(f"Player {str_tid} registered UDP address: {addr}")
-                self.server.forced_full_sync = True
+                # need to send ack back
+                msg = self.build_message("ACK", subject="init")
+                self.server.async_msg.put_msg_by_user(msg, int(p_tid))
             else:
-                print("in? -- >", str_tid)
+                print("already in? -- >", str_tid)
 
     def dir_f(self, payload, addr):
         p_tid = str(payload.get("tid"))
         msg_id = payload.get("ID", -1)
         direction = payload.get("direction")
         is_boosting = payload.get("boost")
-        # רישום אוטומטי אם ה-INIT הלך לאיבוד
-        # if p_tid not in self.udp_clients:
-        #   self.init_f(payload, addr)
         is_new_msg = False
         with self.udp_lock:
             if p_tid not in self.udp_clients:
@@ -346,7 +317,7 @@ class HandleClientUDP(threading.Thread):
     def remove_client(self, tid):
         str_tid = str(tid)
         with self.udp_lock:
-            # נמצא את הכתובת שקשורה ל-TID הזה כדי למחוק אותה מהמפה השנייה
+            # find addr
             addr_to_remove = None
             for addr, t_id in self.addr_to_tid.items():
                 if t_id == str_tid:
@@ -359,7 +330,6 @@ class HandleClientUDP(threading.Thread):
 
     def send_data(self, data_dict, addr):
         try:
-            # dict --> JSON string --> bytes
             data_bytes = msgpack.packb(data_dict)
             data_bytes = self.encrypt_data_with_AES(data_bytes, addr)
             if data_bytes:
@@ -373,11 +343,10 @@ class Client(threading.Thread):
         super().__init__()
         self.server = server
         self.sock = sock
-        self.transport_data = TransportData(self.sock, "KEY")  # key?
+        self.transport_data = TransportData(self.sock, "KEY")
         self.state = STATE_HANDSHAKE
         self.tid = tid
         self.username = None
-        # self.password = None
         self.sync_me = False
         self.need_new_board = False
 
@@ -405,9 +374,7 @@ class Client(threading.Thread):
                 except Exception:
                     continue
                 print(f"CLASS:client | PROC:run | data after:{data}")
-                # data = json.loads(data)
                 command = data.get("cmd")
-                payload = data.get("payload", {})
                 if command:
                     if command in ALLOWED_COMMANDS[self.state]:
                         command = data.get("cmd")
@@ -418,11 +385,12 @@ class Client(threading.Thread):
                             self.send_error("002")
                     else:
                         print(f"[Security] Blocked {command} for client {self.tid} in state {self.state}")
-                        self.send_error("005")  # שגיאת "מצב לא חוקי" (תגדיר ב-ERROR_DICT)
+                        self.send_error("005")
                 else:
                     self.send_error("002")
             except socket.error as err:
-                if err.errno == EWOULDBLOCK or str(err) == "timed out":  # if we use conn.settimeout(x)
+                # settimeout --> time to send back msgs
+                if err.errno == EWOULDBLOCK or str(err) == "timed out":
                     msgs = self.server.async_msg.get_async_messages_to_send(self.sock)
                     for data in msgs:
                         self.send_with_sign(data)
@@ -491,6 +459,7 @@ class Client(threading.Thread):
         print(f"CLASS:client | PROC:token_login_f | proc got --> {device_id}")
         is_success = self.server.user_manager.check_auto_login(user_name, token, device_id)
         if is_success:
+            # login succeed
             self.state = STATE_LOBBY
             # coins add
             self.username = user_name
@@ -512,7 +481,6 @@ class Client(threading.Thread):
     def login_f(self, payload):
         user_name = payload.get("email")
         password = payload.get("password")
-        # ------
         device_id = payload.get("device_id")
         remember_me = payload.get("remember_me")
         # ------
@@ -527,7 +495,7 @@ class Client(threading.Thread):
                 self.server.user_manager.update_user_token(user_name, token_to_send, device_id)
                 print(f"User {user_name} asked to be remembered. Token generated.")
             else:
-                # אם לא רצו להיזכר, כדאי אפילו למחוק טוקן ישן מה-DB ליתר ביטחון
+                # if didn't want to be remembered we update it
                 self.server.user_manager.update_user_token(user_name, None, None)
                 print(f"User {user_name} logged in without persistence.")
             total_coins = self.server.user_manager.get_coins(user_name)
@@ -547,7 +515,6 @@ class Client(threading.Thread):
 
         user_name = payload.get("email")
         password = payload.get("password")
-        # ------
         device_id = payload.get("device_id")
         remember_me = payload.get("remember_me")
         # ------
@@ -564,7 +531,7 @@ class Client(threading.Thread):
                 self.server.user_manager.update_user_token(user_name, token_to_send, device_id)
                 print(f"User {user_name} asked to be remembered. Token generated.")
             else:
-                # אם לא רצו להיזכר, כדאי אפילו למחוק טוקן ישן מה-DB ליתר ביטחון
+                # if didn't want to be remembered we update it
                 self.server.user_manager.update_user_token(user_name, None, None)
                 print(f"User {user_name} logged in without persistence.")
 
@@ -586,14 +553,9 @@ class Client(threading.Thread):
         # success mean | True --> if server found spot for me | False --> server put me on wait
         if success:
             self.need_new_board = True
-            #self.send_new_board_f()
-            #self.state = STATE_GAME
-            #self.server.async_msg.player_ready_for_game(int(self.tid))
-            #self.server.UDP_async_msg.player_ready_for_game(int(self.tid))
         else:
             print(f"CLASS:client | PROC:color | info:waiting for place in board")
 
-    # --------------------------------------------------------------------------------------------------------------
     def send_new_board_f(self, tick, sync=None, values=True):
         if not sync:
             sync = self.server.players_manager.get_full_sync(new_map=True)
@@ -604,19 +566,15 @@ class Client(threading.Thread):
             self.server.async_msg.player_ready_for_game(int(self.tid))
             self.server.UDP_async_msg.player_ready_for_game(str(self.tid))
         print("CLASS: client | PROC:send_new_board_f | info: send NEW_BOARD!")
-    # --------------------------------------------------------------------------------------------------------------
 
     def key_f(self, payload):
         key_got = base64.b64decode(payload.get("key"))
         key_got = decrypt_aes_key(key_got, self.server.private_key)
         if key_got == "failed":
             print(f"CLASS:client | PROC:key_f | info:failed")
-
-            # self.server.async_msg.put_msg_by_user(self.build_message("ERROR", num="009", info="Key not recognized"),
-            #                                   int(self.tid))
+            self.send_error("009")
         else:
             print(f"CLASS:client | PROC:key_f | info:success")
-
             self.state = STATE_AUTH
             self.transport_data.key = key_got
             self.server.async_msg.put_msg_by_user(self.build_message("ID", tid=str(self.tid)), int(self.tid))
@@ -628,20 +586,15 @@ class Client(threading.Thread):
         self.server.UDP_async_msg.not_ready(str(self.tid))
 
     def sync_me_f(self, payload):
+        # player ask for personal tcp update
         if self.state == STATE_GAME:
             self.sync_me = True
-
-    def start_board_f(self, payload):
-        # new player ask for board (future use maybe)
-        sync = self.server.players_manager.get_full_sync()
-        self.server.async_msg.put_msg_by_user(self.build_message("NEW_BOARD", sync=sync), int(self.tid))
 
     def send_with_sign(self, data_dict):
         try:
             print(f"CLASS:client | PROC:send_with_sign | state:{self.state} | data:{data_dict}")
             data_bytes = msgpack.packb(data_dict)
-            # json_data = json.dumps(data_dict)  # dict --> JSON string
-            self.send_with_size(data_bytes)  # string --> bytes
+            self.send_with_size(data_bytes)
         except Exception as e:
             print("Send failed:", e)
 
@@ -654,38 +607,33 @@ class Client(threading.Thread):
     def close(self):
         try:
             if self.username:
-
                 try:
+                    # saving data before leaving!
                     cli_money = self.server.players_manager.pop_player_coins(self)
                     if cli_money and cli_money > 0:
                         self.server.user_manager.add_coins(self.username, cli_money)
                         print(f"[SAVED] {cli_money} coins saved for {self.username} before closing.")
                 except Exception:
                     pass
+            self.server.user_manager.save_users()
 
-                self.server.user_manager.save_users()
             self.server.UDP_async_msg.not_ready(str(self.tid))
             self.server.handle_client_udp_obj.remove_client(self.tid)
-
             self.server.remove_tcp_cli_obj(self)
-
             self.server.async_msg.not_ready(int(self.tid))
             self.server.players_manager.remove_player(self)
-            # -----------------------------------
-            self.server.user_manager.save_users()
             self.sock.close()
         except Exception as e:
             print(e)
 
 
 class Server:
-    def __init__(self, TCPport, UDPport1, UDPport2, ip="0.0.0.0"):
+    def __init__(self, TCPport, UDPport1, ip="0.0.0.0"):
         self.lock = threading.RLock()
-        self.forced_full_sync = False
+        self.sync_interval = 100
         self.ip = ip
         self.TCP_port = TCPport
         self.UDP_port1 = UDPport1
-        self.UDP_port2 = UDPport2
         self.udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -695,7 +643,7 @@ class Server:
         self.async_msg: AsyncMessages = AsyncMessages()
         self.UDP_async_msg: UDPAsyncMessages = UDPAsyncMessages()
         self.user_manager = UserManager()
-        self.pepper = "leehu_the_king"
+        self.pepper = "leehu_the_king"  # change it
         self.stop_event = threading.Event()
 
         # --- RSA --- #
@@ -712,9 +660,9 @@ class Server:
             format=serialization.PublicFormat.SubjectPublicKeyInfo
         )
         self.b64_public_ready = base64.b64encode(self.pem_public_ready).decode('utf-8')
+        # --- RSA --- #
 
         self.shop = self.user_manager.get_color_shop()
-        # --- RSA --- #
 
     def start(self):
         self.udp_sock.bind((self.ip, self.UDP_port1))
@@ -725,18 +673,15 @@ class Server:
     def run(self):
         self.handle_client_udp_obj = HandleClientUDP(self, self.udp_sock)
         self.handle_client_udp_obj.start()
-        # print(self.user_manager.refresh_all_tokens())
-        # input("stop")
         i = 1
         threading.Thread(target=self.game_loop, daemon=True).start()
         while not self.stop_event.is_set():
             try:
+                # accepting clients loop
                 cli_sock, addr = self.sock.accept()
                 self.async_msg.add_new_socket(cli_sock, i)
                 client_obj = Client(self, cli_sock, i)
-
                 self.client_obj_lst.append(client_obj)
-
                 client_obj.start()
                 i += 1
             except socket.error:
@@ -749,8 +694,6 @@ class Server:
 
     def game_loop(self):
         tick_id = 1
-        next_sync_tick = 100
-        INTERVAL = 100
         send_tcp = False
         udp_history = {}
         HISTORY_MAX_SIZE = 5
@@ -763,15 +706,14 @@ class Server:
             self.players_manager.set_snake_color_locked(str(bot.tid), [tuple(color)])
         while not self.stop_event.is_set():
             try:
-                #print(self.async_msg.ready_for_game, "---------------------")
-                self.players_manager.move_all_players(tick_id)  # lock in the file
-                delta = self.players_manager.get_world_delta()  # lock in the file
+                self.players_manager.move_all_players(tick_id)
+                delta = self.players_manager.get_world_delta()
                 udp_history[str(tick_id)] = delta.copy()
                 if tick_id > HISTORY_MAX_SIZE:
                     udp_history.pop(str(tick_id - HISTORY_MAX_SIZE), None)
 
-                if self.forced_full_sync or tick_id >= next_sync_tick:  # prepare for tcp send (update board for all)
-                    sync = self.players_manager.get_full_sync()  # lock in the file
+                if AUTO_TCP_UPDATE and tick_id % self.sync_interval == 0:
+                    sync = self.players_manager.get_full_sync()
                     if "full_grid" in sync:
                         tcp_delta = delta.copy()
                         tcp_delta["full_grid"] = sync["full_grid"]
@@ -779,9 +721,6 @@ class Server:
                         tcp_delta.pop("add", None)
                         tcp_board_msg = self.build_message("BOARD", delta=tcp_delta, ID=tick_id)
                         send_tcp = True
-                    next_sync_tick = tick_id + INTERVAL
-                    self.forced_full_sync = False
-                # -------------------------------------------------
                 else:
                     # players who asked for personal sync
                     need_sync_players = [c for c in self.client_obj_lst if c.sync_me]
@@ -815,12 +754,9 @@ class Server:
                             total_money = self.user_manager.get_coins(
                                 dead_client.username) if dead_client.username else 0
                             print(f"CLASS:server | PROC:game_loop | total_money:{total_money} | dead cli:{dead_client.username}")
-
                             self.send_update_coins(p_id_str, total_money)
                             #  coins add
                             dead_client.state = STATE_LOBBY
-                            #self.async_msg.not_ready(int(p_id_str))
-                            #self.UDP_async_msg.not_ready(str(p_id_str))
                             self.players_manager.remove_player(dead_client)
                             dead_client.snake_color = None
                             if p_id_str in self.handle_client_udp_obj.tid_to_ID:
@@ -828,9 +764,11 @@ class Server:
                             print(f"Server updated state for dead player {p_id_str} back to LOBBY")
                 udp_board_msg = self.build_message("BOARD", delta=delta, ID=tick_id, history=udp_history)
                 self.UDP_async_msg.put_msg_to_all(udp_board_msg)
+
                 if send_tcp:
                     self.async_msg.put_msg_to_all(tcp_board_msg)
                     send_tcp = False
+
                 tick_id += 1
             except Exception as e:
                 print("Caught error in game loop:")
@@ -881,11 +819,9 @@ class Server:
 
 
 def main():
-    server_obj = Server(46767, 44444, 47676)
+    server_obj = Server(46767, 44444)
     server_obj.start()
 
 
 if __name__ == "__main__":
     main()
-
-# ##

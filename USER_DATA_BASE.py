@@ -1,3 +1,5 @@
+__author__ = "Leehu Shacht"
+
 import threading
 import pickle
 import secrets
@@ -49,7 +51,8 @@ class UserManager:
         try:
             with open(self.pickle_file, "rb") as f:
                 return pickle.load(f)
-        except:
+        except Exception as e:
+            print(f"Failed to load user file: {e}")
             return {}
 
     def _save_users_private(self):
@@ -71,7 +74,7 @@ class UserManager:
             if self._is_user_exists(username):
                 return False
             salt = secrets.token_hex(16)
-            # יצירת ה-Hash (סיסמה + מלח)
+
             hashed_pass = hashlib.sha256((password + pepper + salt).encode()).hexdigest()
 
             self.users[username] = {
@@ -114,7 +117,6 @@ class UserManager:
         with self.lock:
             if username in self.users:
                 self.users[username]["token"] = None
-                # אנחנו משאירים את ה-device_id, אבל בלי טוקן אי אפשר להיכנס
                 self._save_users_private()
                 return True
             return False
@@ -128,7 +130,6 @@ class UserManager:
 
             stored_hash = user_data["hash"]
             salt = user_data["salt"]
-            # חישוב ה-Hash של מה שהמשתמש הקליד עכשיו
             check_hash = hashlib.sha256((password + pepper + salt).encode()).hexdigest()
 
             return check_hash == stored_hash
@@ -171,7 +172,6 @@ class UserManager:
                     self.users[username]["color_collection"] = ["c_white", "c_red", "c_green", "c_blue"]
                 if not self.users[username]["color_collection"]:
                     self.users[username]["color_collection"] = ["c_white", "c_red", "c_green", "c_blue"]
-                # self._save_users_private()
                 return self.users[username]["color_collection"]
             return []
 
@@ -185,13 +185,11 @@ class UserManager:
         with self.lock:
             for user_email in self.users:
                 print(user_email)
-                # בודקים אם למשתמש בכלל יש טוקן פעיל לפני שמנקים
                 if self.users[user_email].get('token') is not None:
                     self.users[user_email]['token'] = None
                     self.users[user_email]['device_id'] = None
                     count += 1
 
-            # שמירה פיזית של הקובץ לאחר השינוי
             self._save_users_private()
 
         print(f"[Security] Global refresh completed. {count} users were forced to logout.")

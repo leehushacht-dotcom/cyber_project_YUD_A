@@ -1,8 +1,6 @@
-"""author: Leehu Shacht"""
+__author__ = "Leehu Shacht"
 
-import socket
-
-SIZE_HEADER_FORMAT = "000000000|" # n digits for data size + one delimiter
+SIZE_HEADER_FORMAT = "000000000|"  # n digits for data size + one delimiter
 size_header_size = len(SIZE_HEADER_FORMAT)
 TCP_DEBUG = False
 
@@ -34,13 +32,12 @@ class TransportData:
             except Exception as e:
                 print(f"encryption failed: {e}")
                 return
-        len_data = len(data)
         len_data = str(len(data)).zfill(size_header_size - 1) + "|"
         len_data = len_data.encode()
         data = len_data + data
 
         self.sock.sendall(data)
-        if TCP_DEBUG and len(len_data) > 0 and self.key != "KEY" and not self.wait:  # later better debug, just for now
+        if TCP_DEBUG and len(len_data) > 0 and self.key != "KEY" and not self.wait:
             data = data[:100]
             if type(data) == bytes:
                 try:
@@ -49,8 +46,8 @@ class TransportData:
                     pass
             print(f"\nSent({len_data})>>>{data}")
         elif TCP_DEBUG:
-            print("sent no encrypt")
-        self.wait=False
+            print(f"sent no encrypt: {data}")
+        self.wait = False
 
     def recv_by_size(self, return_type="bytes"):
         str_size = b""
@@ -72,10 +69,9 @@ class TransportData:
                     break
                 data += _d
         if data_len != len(data):
-            data = b""  # Partial data is like no data !
+            data = b""
             return data
         if self.key != "KEY":
-            #print(len(data))
             try:
                 iv = data[:16]
                 ciphertext = data[16:]

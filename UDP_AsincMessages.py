@@ -1,4 +1,4 @@
-"""author: Leehu Shacht"""
+__author__ = "Leehu Shacht"
 
 import threading
 from collections import defaultdict

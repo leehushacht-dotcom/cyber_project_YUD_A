@@ -1,9 +1,8 @@
-"""author: Leehu Shacht"""
+__author__ = "Leehu Shacht"
 
 import threading
 import random
 from PIL import Image
-# from collections import defaultdict
 
 opposites = {"U": "D", "D": "U", "L": "R", "R": "L"}
 BOARD_HEIGHT = 100
@@ -982,11 +981,9 @@ class HoldPlayersData:
         x = random.random()
         if x < 0.1:
             return -1
-        if x < 0.6:
+        if x < 0.7:
             return 1
-        if x < 0.9:
-            return 2
-        return 3
+        return 2
 
     def create_better_fruit_value(self):
         x = random.random()
