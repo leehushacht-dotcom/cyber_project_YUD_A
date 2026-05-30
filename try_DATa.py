@@ -7,6 +7,8 @@ from PIL import Image
 opposites = {"U": "D", "D": "U", "L": "R", "R": "L"}
 BOARD_HEIGHT = 100
 BOARD_WIDTH = 100
+BLOCK_SIZE = 10
+
 MAX_FRUITS = 700
 MAX_COINS = 80
 
@@ -22,7 +24,6 @@ COIN = 6
 
 GOOD_VALUE = 10
 GOOD_APPLE_VALUE = 1
-BLOCK_SIZE = 10
 
 
 class SpatialGrid:
@@ -34,9 +35,11 @@ class SpatialGrid:
         self.coins = set()
 
     def get_cell(self, x, y):
-        return (x//BLOCK_SIZE, y//BLOCK_SIZE)
+        return x//BLOCK_SIZE, y//BLOCK_SIZE
 
     def add_point(self, x, y, kind, player, color_index=None):
+        # add part to grid, if in new cell we create the cell first
+        # also add to self sets
         cell = self.get_cell(x, y)
         if cell not in self.grid:
             self.grid[cell] = set()
@@ -53,6 +56,8 @@ class SpatialGrid:
         self.water.add((x, y))
 
     def remove_point(self, x, y, kind, player, ticket):
+        # every point is unique so we can easily remove it
+        # also remove from self sets
         cell = self.get_cell(x, y)
         if cell in self.grid:
             target = (x, y, kind, player, ticket)
@@ -63,44 +68,30 @@ class SpatialGrid:
                 self.coins.discard((x, y))
             if not self.grid[cell]:
                 del self.grid[cell]
-    """
-    def remove_point(self, x, y, kind, player, ticket):
-        cell = self.get_cell(x, y)
-        if cell in self.grid:
-            self.grid[cell] = {p for p in self.grid[cell] if
-                               not (p[0] == x and p[1] == y and p[2] == kind and p[3] == player and p[4] == ticket)}
-            if kind == APPLE:
-                self.fruits.discard((x, y))
-            elif kind == COIN:
-                self.coins.discard((x, y))
-            if not self.grid[cell]:
-                del self.grid[cell]
-    """
-    def get_point_value(self, x, y, hardcore=False):
-        safe_radius = 2 if hardcore else 0
+
+    def get_spawn_safety_distance(self, x, y, is_player=False):
+        # check if in water or wall
+        safe_radius = 2 if is_player else 0
         for dx in range(-safe_radius, safe_radius + 1):
             for dy in range(-safe_radius, safe_radius + 1):
-                check_x, check_y = x + dx, y + dy  # point in the radius we want
-                if (check_x, check_y) in self.wall or (check_x, check_y) in self.water:
+                if (x + dx, y + dy) in self.wall or (x + dx, y + dy) in self.water:
                     return 0
 
         points = self.nearby_points_c(x, y)
-        value = 10000
+        closest_snake_dist = 10000
         for point in points:
-            kind = point[2]  # שולפים את סוג האובייקט
-            # אנחנו מתייחסים רק לנחשים! תפוחים לא פוסלים מיקום.
-            if kind in (SNAKE_HEAD, SNAKE_BODY):
-                distance = abs(x - point[0]) + abs(y - point[1])
-                if distance < value:
-                    value = distance
-            elif kind in (APPLE, COIN):
-                distance = abs(x - point[0]) + abs(y - point[1])
+            kind = point[2]
+            distance = abs(x - point[0]) + abs(y - point[1])
+            if kind in (APPLE, COIN):
                 if distance == 0:
                     return 0
-                if hardcore and kind == APPLE:
-                    if distance < 3:
-                        return 0
-        return value
+
+            elif kind in (SNAKE_HEAD, SNAKE_BODY):
+                if is_player and distance < 3:
+                    return 0
+                if distance < closest_snake_dist:
+                    closest_snake_dist = distance
+        return closest_snake_dist
 
     def nearby_points_c(self, x, y):
         cell_x, cell_y = self.get_cell(x, y)
@@ -112,14 +103,8 @@ class SpatialGrid:
                     points.extend(self.grid[cell])
         return points
 
-    def is_cell_free(self, x, y):
-        points = self.nearby_points_c(x, y)
-        for px, py, kind, player, ticket in points:
-            if abs(px - x) <= 1 and abs(py - y) <= 1:
-                return False
-        return True
-
-    def is_exact_cell_free_from_snakes(self, x, y):
+    def is_exact_point_free_from_snakes(self, x, y):
+        # made for check next step
         cx, cy = self.get_cell(x, y)
         points = self.get_points_in_cell((cx, cy))
         if points:
@@ -186,6 +171,7 @@ class HoldPlayersData:
             self.fruits_num += 1
             self.fruit_to_tick[(x, y)] = int(self.cur_tick)
         else:
+            # too many apples, ask for cleaning
             self.board_is_full_A = True
 
     def _spawn_coin(self, x, y, force_spawn=False):
@@ -194,12 +180,13 @@ class HoldPlayersData:
             self.coins_num += 1
             self.coin_to_tick[(x, y)] = int(self.cur_tick)
         else:
+            # too many coins, ask for cleaning
             self.board_is_full_C = True
 
     def _remove_exist_apple(self, x, y, val):
         self._object_remove(x, y, APPLE, None, val)
         self.fruits_num -= 1
-        self.fruit_to_tick.pop((x,y), None)
+        self.fruit_to_tick.pop((x, y), None)
 
     def _remove_exist_coin(self, x, y):
         self._object_remove(x, y, COIN, None, 1)
@@ -217,22 +204,6 @@ class HoldPlayersData:
     def spawn_flower(self, x, y):
         with self.game_lock:
             self.flowers.add((x, y))
-    """
-    def build_fruits_and_coins_board(self):  # improve create logic, *also in spawn after eating(other funcs)
-        turn = 1
-        for i in range(100):
-            x = (i % 10) * 10 + random.randint(0, 9)
-            y = (i // 10) * 10 + random.randint(0, 9)
-            with self.game_lock:
-                if (x, y) in self.GRID.wall or (x, y) in self.GRID.water:
-                    continue
-                if turn % 2 == 0:
-                    val = self.create_fruit_value()
-                    self._spawn_apple(x, y, val)
-                else:
-                    self._spawn_coin(x, y)
-                turn += 1
-    """
 
     def build_fruits_and_coins_board(self, target_amount=500, ingame=False):
         max_x = BOARD_WIDTH - 1
@@ -241,6 +212,7 @@ class HoldPlayersData:
         attempts = 0
         max_attempts = target_amount * 3
         with self.game_lock:
+            # all the occupied points
             occupied_spots = set(self.GRID.wall).union(self.GRID.water)
             if ingame:
                 for points in self.GRID.grid.values():
@@ -259,7 +231,6 @@ class HoldPlayersData:
                     self._spawn_coin(x, y)
                 occupied_spots.add((x, y))
                 items_spawned += 1
-
         print(f"Board initialized with {items_spawned} items.")
 
     def load_map_from_image(self, image_path="base_map.png"):
@@ -281,23 +252,20 @@ class HoldPlayersData:
         for _ in range(max_attempts):
             x = random.randint(5, BOARD_WIDTH - 6)
             y = random.randint(5, BOARD_HEIGHT - 6)
-            in_wall_or_water = (x, y) in self.GRID.wall or (x, y) in self.GRID.water
-            if not in_wall_or_water:
-                dist_from_objects = self.GRID.get_point_value(x, y, direction)
-            if in_wall_or_water:
-                continue
+            dist_from_objects = self.GRID.get_spawn_safety_distance(x, y, direction)
             if dist_from_objects >= min_dist:
                 if direction:
                     options = ["U", "D", "R", "L"]
                     return (x, y), options[random.randint(0, 3)]
                 return (x, y), None
-
         return None, None
 
     def add_new_player_to_game(self, cli_obj, bot=False):
+        # new player want to join
         with self.game_lock:
             pos, x_y = self._find_safe_spawn(GOOD_VALUE, 20, True)
             if pos and x_y:
+                # found good start spot
                 with self.users_lock:
                     self.live_heads_pos[cli_obj] = (pos[0], pos[1])
                     self.tid_to_obj[str(cli_obj.tid)] = cli_obj
@@ -309,19 +277,19 @@ class HoldPlayersData:
                     self.in_game_players[cli_obj]["length"] = 5
                     self.in_game_players[cli_obj]["color_counter"] = len(self.in_game_players[cli_obj]["body"])
                     self.in_game_players[cli_obj]["growth"] = 4
-                    # רישום הראש בלוח כדי שכולם יראו אותו בפריים הבא
                     self._object_add(pos[0], pos[1], SNAKE_HEAD, cli_obj, 1)
+                    self.changed = True
                     if bot:
                         print("is bot")
                         self.in_game_bots.append(cli_obj)
                         self.newest_bot = int(cli_obj.tid)
                         self.tid_to_usernames[str(cli_obj.tid)] = cli_obj.username
-                        self.changed = True
                     else:
                         self.tid_to_usernames[str(cli_obj.tid)] = cli_obj.username
                         cli_obj.is_ready = True
                 return True
             else:
+                # not found good start spot, we add him to the waiting list
                 with self.users_lock:
                     self.waiting_players.append((cli_obj, bot))
                 return False
@@ -342,15 +310,15 @@ class HoldPlayersData:
             if cli_obj not in self.in_game_players:
                 return "not in game"
             queue = self.in_game_players[cli_obj]["dir_queue"]
-            # אם יש פקודות בתור, נבדוק מול הפקודה האחרונה בתור. אם לא, נבדוק מול הכיוון הנוכחי.
+            # we need to compare to the last dir in list not to the last dir done unless the list is empty
             last_requested = queue[-1] if queue else self.in_game_players[cli_obj]["dir"]
-            # פילטר ספאם (אם שלחו לנו את אותו כיוון ברצף, נתעלם)
+
             if last_requested == direction:
                 return "spam ignored"
 
-            # בודקים האם הפקודה החדשה חוקית אחרי הפקודה הקודמת שביקשנו!
+            # check legal
             if opposites[last_requested] != direction:
-                if len(queue) < 2:  # נאפשר לשמור עד 2 פניות מהירות מראש
+                if len(queue) < 2:  # list size
                     queue.append(direction)
                 return "success"
             else:
@@ -358,20 +326,21 @@ class HoldPlayersData:
 
     def move_all_players(self, server_tick):
         self.cur_tick = server_tick
-        print(self.fruits_num, "|", self.coins_num)
+        print(self.fruits_num, "|", self.coins_num)  # delete it later
 
         self.update_bots(server_tick)
         with self.game_lock:
             if self.board_is_full_A:
                 if random.random() > 0.25:
-                    print("cleaning!")
+                    print("cleaning apples!")
                     self._cleanup_unseen_apples_fast()
                     self.board_is_full_A = False
             if self.board_is_full_C:
                 if random.random() > 0.25:
-                    print("cleaning!")
+                    print("cleaning coins!")
                     self._clean_old_coins()
                     self.board_is_full_C = False
+            # who moves this tick
             moving_this_tick = []
             with self.users_lock:
                 boosts = self.player_to_boost.copy()
@@ -380,25 +349,28 @@ class HoldPlayersData:
                 is_boosting = boosts.get(snake, False)
 
                 player_data = self.in_game_players[snake]
+                # if player boosting or on water we add him also
                 head_x = player_data["body"][0][0]
                 head_y = player_data["body"][0][1]
                 in_water = (head_x, head_y) in self.GRID.water
-
                 if (is_boosting or in_water) and self.in_game_players[snake]["length"] > 5:
                     moving_this_tick.append(snake)
                 elif server_tick % 2 == 0:
                     moving_this_tick.append(snake)
 
-            # שלב 1: שולפים מהתור ומעדכנים כיוונים לכל הנחשים!
+            # only moving snakes this turn
             for snake in moving_this_tick:
+                # update direction
                 queue = self.in_game_players[snake]["dir_queue"]
                 if queue:
                     self.in_game_players[snake]["dir"] = queue.pop(0)
+            # update all the collision snakes
             self.coli = self._check_collisions(moving_this_tick)
+            # moving all snakes
             for snake in moving_this_tick:
                 is_boosting = boosts.get(snake, False)
                 self._move_player_by_direction(snake, is_boosting)
-
+        # update fruit and coin board
         if self.waiting_fruits_count > 0 and random.random() > 0.25:
             with self.game_lock:
                 x_y, _ = self._find_safe_spawn()
@@ -416,11 +388,11 @@ class HoldPlayersData:
             self.waiting_coins_count -= 1
 
         waiting_player_data = None
+        # we add one snake at a time from waiting list
         with self.users_lock:
             if self.waiting_players:
                 waiting_player_data = self.waiting_players.pop(0)
 
-        # 2. אם שלפנו מישהו, נחפש לו מקום בנחת (ללא מנעולים!)
         if waiting_player_data:
             player, bot = waiting_player_data
             with self.game_lock:
@@ -439,15 +411,13 @@ class HoldPlayersData:
                         }
                         self._object_add(pos[0], pos[1], SNAKE_HEAD, player, 1)
                         if bot:
-                            print("is bot")
                             self.in_game_bots.append(player)
                             self.newest_bot = int(player.tid)
                             self.tid_to_usernames[str(player.tid)] = player.username
-                            self.changed = True
-
                         else:
                             self.tid_to_usernames[str(player.tid)] = player.username
                             player.is_ready = True
+                        self.changed = True
                     if not bot:
                         print("send NEW_BOARD from file")
                         player.need_new_board = True
@@ -459,72 +429,57 @@ class HoldPlayersData:
         return False, None
 
     def _cleanup_unseen_apples_fast(self, amount=10, hard_core=False):
-        # hard core is for crucial situation like more than 1000 apples on board then need to reduce the radius frm head
         count = 0
         visible_cells = set()
-        for hx, hy in self.live_heads_pos.values():
+        # all seen cells
+        for cli_obj, (hx, hy) in self.live_heads_pos.items():
+            if cli_obj in self.in_game_bots:
+                continue
             head_cell_x, head_cell_y = self.GRID.get_cell(hx, hy)
-
-            for cx in range(head_cell_x - 3, head_cell_x + 4):
-                for cy in range(head_cell_y - 3, head_cell_y + 4):
+            for cx in range(head_cell_x - 2, head_cell_x + 3):
+                for cy in range(head_cell_y - 2, head_cell_y + 3):
                     visible_cells.add((cx, cy))
-        apples_to_check = list(self.GRID.fruits)
-        for ax, ay in apples_to_check:
-            apple_cell = self.GRID.get_cell(ax, ay)
-            if apple_cell not in visible_cells:
-                points = self.GRID.get_points_in_cell(apple_cell)  #
-                if points:
-                    for px, py, kind, owner, ticket in points:
-                        if px == ax and py == ay and kind == APPLE:  #
-                            count += 1
-                            self._remove_exist_apple(ax, ay, ticket)  #
-                            break
-            if count >= amount:
-                break
-        print(count ,"apples cleaned!")
 
-    def _cleanup_unseen_coins_fast(self):
-        count = 0
-        visible_cells = set()
-        for hx, hy in self.live_heads_pos.values():
-            head_cell_x, head_cell_y = self.GRID.get_cell(hx, hy)
-            for cx in range(head_cell_x - 3, head_cell_x + 4):
-                for cy in range(head_cell_y - 3, head_cell_y + 4):
-                    visible_cells.add((cx, cy))
-        coins_to_check = list(self.GRID.coins)
-        for ax, ay in coins_to_check:
-            coin_cell = self.GRID.get_cell(ax, ay)
-            if coin_cell not in visible_cells:
-                points = self.GRID.get_points_in_cell(coin_cell)  #
-                if points:
-                    for px, py, kind, owner, ticket in points:
-                        if px == ax and py == ay and kind == COIN:  #
-                            count += 1
-                            self._remove_exist_coin(ax, ay)  #
-                            break
-        print(count ,"coins cleaned!")
+        candidates = []
+        for cell_xy, points in list(self.GRID.grid.items()):
+            if cell_xy not in visible_cells:
+                for px, py, kind, owner, ticket in points:
+                    if kind == APPLE:
+                        candidates.append((px, py, ticket))
+
+        # we take random apples, so it keep the map balanced
+        apples_to_delete = random.sample(candidates, min(amount, len(candidates)))
+        for px, py, ticket in apples_to_delete:
+            self._remove_exist_apple(px, py, ticket)
+        if apples_to_delete:
+            print(f"{len(apples_to_delete)} apples cleanly scattered-removed!")
 
     def _clean_old_coins(self, amount=5):
-        sorted_items = sorted(self.coin_to_tick.items(), key=lambda x: x[1])
-        print(sorted_items)
-        last_tick = self.cur_tick
-        count = amount
-        for pos, tick in sorted_items:
-            coin_cell = self.GRID.get_cell(pos[0], pos[1])
-            if last_tick - tick > 100:
-                points = self.GRID.get_points_in_cell(coin_cell)
-                if points:
-                    for px, py, kind, owner, ticket in points:
-                        if px == pos[0] and py == pos[1] and kind == COIN:
-                            self._remove_exist_coin(pos[0], pos[1])
-                            count -= 1
-                            break
-            else:
-                break
-            if count <= 0:
-                break
+        visible_cells = set()
+        # all seen cells
+        for cli_obj, (hx, hy) in self.live_heads_pos.items():
+            if cli_obj in self.in_game_bots:
+                continue
+            head_cell_x, head_cell_y = self.GRID.get_cell(hx, hy)
+            for cx in range(head_cell_x - 2, head_cell_x + 3):
+                for cy in range(head_cell_y - 2, head_cell_y + 3):
+                    visible_cells.add((cx, cy))
 
-    def get_full_sync(self, new_map=False):  # for new players 1 time, next time use self.get_world_delta()
+        # only unseen and old
+        candidates = []
+        for (cx, cy), tick_spawned in self.coin_to_tick.items():
+            if self.cur_tick - tick_spawned > 100:
+                cell_coords = self.GRID.get_cell(cx, cy)
+                if cell_coords not in visible_cells:
+                    candidates.append((cx, cy))
+
+        # random remove
+        coins_to_delete = random.sample(candidates, min(amount, len(candidates)))
+        for cx, cy in coins_to_delete:
+            self._remove_exist_coin(cx, cy)
+
+    def get_full_sync(self, new_map=False):
+        # return full board data
         with self.game_lock:
             with self.users_lock:
                 full_grid = []
@@ -532,11 +487,6 @@ class HoldPlayersData:
                     for px, py, kind, player, ticket in list(points):
                         p_id = str(player.tid) if player else None
                         full_grid.append((px, py, kind, p_id, ticket))
-#                "add": final_add,
- #               "remove": list(self.to_remove),
-  #              "died": list(self.died_snakes),
-   #             "leaders": self._get_leaders(),
-    #            "length": {str
                 msg = {
                     "full_grid": full_grid,
                     "board_size": (BOARD_WIDTH, BOARD_HEIGHT),
@@ -545,7 +495,6 @@ class HoldPlayersData:
                     "length": {str(snake.tid): data["length"] for snake, data in self.in_game_players.items()},
                     "usernames": self.tid_to_usernames.copy()
                 }
-
                 if new_map:
                     msg["walls"] = list(self.GRID.wall)
                     msg["water"] = list(self.GRID.water)
@@ -553,6 +502,7 @@ class HoldPlayersData:
                 return msg
 
     def _move_player_by_direction(self, snake, is_boosting):
+        # set next move
         if snake not in self.in_game_players:
             print("no way")
             return
@@ -570,22 +520,20 @@ class HoldPlayersData:
         old_head = body[0]
         new_head = [old_head[0] + dx, old_head[1] + dy]
 
+        # check if he made collision
         if snake in self.coli:
             self._snake_died(snake)
             return
         in_water = tuple(new_head) in self.GRID.water
-
-        # 1. בדיקת אכילה ועדכון מחסן צמיחה
+        # if he ate
         apple_val = self._is_snake_ate(new_head)
         if apple_val > 0:
-            #if snake in self.in_game_players:
-             #   print("bot ate and grow")
             player_data["growth"] += apple_val
             player_data["length"] += apple_val
             self.waiting_fruits_count += 1
         elif apple_val < 0:
             shrink = abs(apple_val)
-            actual_shrink = min(shrink, player_data["length"] - 5)
+            actual_shrink = min(shrink, player_data["length"] - 5)  # min length = 5
             if actual_shrink > 0:
                 player_data["length"] -= actual_shrink
                 for _ in range(actual_shrink):
@@ -593,38 +541,35 @@ class HoldPlayersData:
                         tail = body.pop()
                         tail_x, tail_y, tail_ticket = tail[0], tail[1], tail[2]
                         self._object_remove(tail_x, tail_y, SNAKE_BODY, snake, tail_ticket)
+
         player_data["color_counter"] += 1
         current_ticket = player_data["color_counter"]
         body.insert(0, [new_head[0], new_head[1], current_ticket])
         self.live_heads_pos[snake] = (new_head[0], new_head[1])
-
-        # 2. עדכון ויזואלי בגריד (ראש וגוף)
-
+        # add new head to grid
         self._object_add(new_head[0], new_head[1], SNAKE_HEAD, snake, current_ticket)
         self._object_remove(old_head[0], old_head[1], SNAKE_HEAD, snake, old_head[2])
         self._object_add(old_head[0], old_head[1], SNAKE_BODY, snake, old_head[2])
 
         if player_data["growth"] > 0:
-            # אנחנו בתהליך צמיחה מאכילה קודמת - לא מורידים זנב
+            # if we in grow -- keep the tail
             player_data["growth"] -= 1
         else:
-            # תנועה רגילה - מורידים זנב
             tail = body.pop()
             tail_x, tail_y, tail_ticket = tail[0], tail[1], tail[2]
             if tail not in body:
                 self._object_remove(tail[0], tail[1], SNAKE_BODY, snake, tail_ticket)
+        # boost logic
         if not is_boosting:
             is_boosting = in_water
         if is_boosting and player_data["length"] > 4:
             if random.random() < 0.3 and not in_water:
                 if len(body) > 5:
-                    # אפשרות א': השחקן בתהליך גדילה (growth > 0)
                     if player_data["growth"] > 0:
-                        # אנחנו פשוט "שורפים" את חוליית הגדילה הבאה
+                        # no remove, just decrease the growth, no pop
                         player_data["growth"] -= 1
                         player_data["length"] -= 1
-                        # שים לב: לא עשינו body.pop(), לכן הזנב נשאר במקום והנחש פשוט יגדל פחות
-                    # אפשרות ב': השחקן לא גדל כרגע (חייבים למחוק חוליה פיזית)
+                    # remove tail, spawn apple
                     elif len(body) > 5:
                         extra_tail = body.pop()
                         extra_tail_x, extra_tail_y, extra_tail_ticket = extra_tail[0], extra_tail[1], extra_tail[2]
@@ -676,13 +621,11 @@ class HoldPlayersData:
         if is_bot:
             self.in_game_bots.remove(snake)
         with self.users_lock:
-            # 2א: מחיקה מילונית עם Casting ל-String
             self.tid_to_obj.pop(str(snake.tid), None)
             self.tid_to_usernames.pop(str(snake.tid), None)
             if str(snake.tid) in self.player_to_color:
                 del self.player_to_color[str(snake.tid)]
                 self.changed = True
-            # 2ב: אם זה בוט, מכניסים אותו בחזרה בצורה מוגנת!
             if is_bot:
                 self.player_to_coin.pop(snake, None)
                 snake.tid = self.newest_bot - 1
@@ -710,20 +653,22 @@ class HoldPlayersData:
         for snake, data in list(self.in_game_players.items()):
             head = data["body"][0]
             if snake in moving_snakes:
+                # head move
                 dx, dy = self.directions_map[data["dir"]]
                 new_head = (head[0] + dx, head[1] + dy)
-
-                #  בודקים את ה-growth מתוך ה-data ולא מה-snake
+                # check if he will grow
                 apple_val = self._is_snake_ate_check(new_head)
                 is_growing = (apple_val > 0) or (data.get("growth", 0) > 0)
-
+                # tail move or stay
                 tail_to_free = tuple(data["body"][-1]) if not is_growing else None
             else:
+                # head stay
                 new_head = (head[0], head[1])
                 tail_to_free = None
+            # add head position, and tail movement by snake
             next_positions[snake] = {"new_head": new_head, "tail_to_free": tail_to_free}
-        # . זיהוי התנגשויות
         for snake in moving_snakes:
+            # if made collision we add him
             nh = next_positions[snake]["new_head"]
             if (nh[0], nh[1]) in self.GRID.wall:
                 collisions.add(snake)
@@ -750,6 +695,7 @@ class HoldPlayersData:
                             self._remove_exist_coin(px, py)
                             self.waiting_coins_count += 1
                         elif owner != snake:
+                            # will meet tail that not move
                             if (px, py) != next_positions.get(owner, {}).get("tail_to_free"):
                                 collisions.add(snake)
         return collisions
@@ -760,7 +706,7 @@ class HoldPlayersData:
             for i, bot in enumerate(self.in_game_bots):
                 if bot not in self.in_game_players:
                     continue
-                # בדיקה פעם ב-2 טיקים (מספיק מהיר להגיב, לא כבד לשרת)
+                # spread bot update to different ticks
                 if (tick_id + i) % 2 != 0:
                     continue
 
@@ -768,64 +714,48 @@ class HoldPlayersData:
                 head_x, head_y = bot_data["body"][0][0], bot_data["body"][0][1]
                 current_dir = bot_data["dir"]
 
-                # ==========================================
-                # 1. מיפוי כיוונים בטוחים (Survival First)
-                # ==========================================
                 forward = current_dir
                 left, right = turn_options[current_dir]
                 options = [forward, left, right]
                 safe_options = []
 
-                # בודקים אילו מהכיוונים באמת פנויים בצעד הבא
+                # which dir safe
                 for d in options:
                     dx, dy = self.directions_map[d]
                     nx, ny = head_x + dx, head_y + dy
                     if (0 <= nx < BOARD_WIDTH and 0 <= ny < BOARD_HEIGHT) and \
-                            self.GRID.is_exact_cell_free_from_snakes(nx, ny) and \
+                            self.GRID.is_exact_point_free_from_snakes(nx, ny) and \
                             (nx, ny) not in self.GRID.wall:
                         safe_options.append(d)
 
                 if not safe_options:
-                    continue  # אין לאן לברוח, מתים
+                    continue  # die
 
-                # חוק ברזל: אם קדימה חסום, חייבים לפנות עכשיו!
                 if forward not in safe_options:
                     bot_data["dir"] = random.choice(safe_options)
                     continue
 
-                # ==========================================
-                # 2. רדאר מניעה (Lookahead)
-                # ==========================================
-                # למרות שקדימה פנוי כרגע, נסתכל 2 צעדים קדימה כדי לא להיכנס למלכודת
+                # forward look
                 fdx, fdy = self.directions_map[forward]
                 nnx, nny = head_x + fdx * 2, head_y + fdy * 2
-
                 forward_looks_dangerous = False
                 if not (0 <= nnx < BOARD_WIDTH and 0 <= nny < BOARD_HEIGHT) or \
-                        not self.GRID.is_exact_cell_free_from_snakes(nnx, nny) or \
+                        not self.GRID.is_exact_point_free_from_snakes(nnx, nny) or \
                         (nnx, nny) in self.GRID.wall:
                     forward_looks_dangerous = True
-
+                # random option to avoid danger
                 if forward_looks_dangerous and len(safe_options) > 1:
                     if random.random() < 0.70:
                         turn_choices = [d for d in safe_options if d != forward]
                         if turn_choices:
                             bot_data["dir"] = random.choice(turn_choices)
                             continue
-
-                # ==========================================
-                # 3. חיפוש אוכל "עצלן" (Lazy Food Seeking)
-                # ==========================================
+                # food hunt
                 VISION_RADIUS = 5
                 apple_xy = self._get_closest_apple(head_x, head_y)
-
-                is_tracking_food = False
-
                 if apple_xy:
                     dist_to_apple = abs(head_x - apple_xy[0]) + abs(head_y - apple_xy[1])
                     if dist_to_apple <= VISION_RADIUS:
-                        is_tracking_food = True
-                        # 40% סיכוי להסתובב לכיוון האוכל (עדיין עצלן!)
                         if random.random() < 0.65:
                             wanted_dir = current_dir
 
@@ -844,88 +774,12 @@ class HoldPlayersData:
                                 bot_data["dir"] = wanted_dir
                                 continue
 
-                # ==========================================
-                # 4. שוטטות מקומית (Local Loitering / Coiling)
-                # ==========================================
-                # אם הבוט לא עוקב אחרי אוכל כרגע, הוא יתחיל להסתובב סביב עצמו
-                if not is_tracking_food:
-                    # 15% סיכוי לפנייה יגרום לו לעשות לולאות ועיגולים קטנים
-                    if random.random() < 0.25:
-                        turn_choices = [d for d in safe_options if d != forward]
-                        if turn_choices:
-                            bot_data["dir"] = random.choice(turn_choices)
+                # random travel
+                if random.random() < 0.25:
+                    turn_choices = [d for d in safe_options if d != forward]
+                    if turn_choices:
+                        bot_data["dir"] = random.choice(turn_choices)
 
-
-    """
-    def update_bots(self, tick_id):
-        options_dict = {"U": ("R", "L", "U"), "D": ("R", "L", "D"), "R": ("U", "D", "R"), "L": ("U", "D", "L")}
-        directions = ["U", "D", "L", "R"]
-        with self.game_lock:
-            for i, bot in enumerate(self.in_game_bots):
-                if (tick_id + i) % 2 != 0:  # separate the work --> less work
-                    continue
-                if bot not in self.in_game_players:
-                    continue
-                g_score = {}
-                last_dir = self.in_game_players[bot]["dir"]
-                options = options_dict[last_dir]
-                # for now random movement, later smarter even A star
-                # self.in_game_players[bot]["dir"] = options[random.randint(0, 2)]
-                head = tuple(self.in_game_players[bot]["body"][0])
-                apple_xy = self._get_closest_apple(head[0], head[1])
-                if not apple_xy:
-                    continue
-                g_score[head] = 0
-                open_list = [(head, self.f_calculation(head, apple_xy, 0))]
-                final_way = {}
-                dept = 0
-                found_path = False
-                default = None
-                while open_list and dept < 80:
-                    dept += 1
-                    min_item = min(open_list, key=lambda x: x[1])
-                    curr_head = min_item[0]
-                    if curr_head == apple_xy:
-                        found_path = True
-                        node = apple_xy
-                        first_dir = None
-                        while node in final_way:
-                            parent_node, dir_taken = final_way[node]
-                            first_dir = dir_taken  # בסוף הלולאה זה יהיה הצעד הראשון!
-                            node = parent_node
-                        if first_dir:
-                            if opposites[self.in_game_players[bot]["dir"]] != first_dir:
-                                self.in_game_players[bot]["dir"] = first_dir
-                        break
-                    for item in directions:
-                        new_x = curr_head[0] + self.directions_map[item][0]
-                        new_y = curr_head[1] + self.directions_map[item][1]
-                        if dept == 1:
-                            if item not in options:
-                                continue
-                            else:
-                                # default
-                                if self.GRID.is_exact_cell_free_from_snakes(new_x, new_y):
-                                    default = item
-                        if not (0 <= new_x < BOARD_WIDTH and 0 <= new_y < BOARD_HEIGHT):
-                            continue
-                        if not self.GRID.is_exact_cell_free_from_snakes(new_x, new_y) and (new_x, new_y) != apple_xy:
-                            continue
-                        g = g_score[curr_head] + 1
-                        f_calc = self.f_calculation((new_x, new_y), apple_xy, g)
-                        if (new_x, new_y) not in g_score.keys():
-                            g_score[(new_x, new_y)] = g
-                            open_list.append(((new_x, new_y), f_calc))
-                            final_way[(new_x, new_y)] = (curr_head, item)
-                        elif (new_x, new_y) in g_score and (g_score[curr_head] + 1) < g_score[(new_x, new_y)]:
-                            g_score[(new_x, new_y)] = g_score[curr_head] + 1
-                            open_list.append(((new_x, new_y), f_calc))
-                            final_way[(new_x, new_y)] = (curr_head, item)
-                    open_list.remove(min_item)
-                if not found_path:
-                    if default:
-                        self.in_game_players[bot]["dir"] = default
-    """
     def pop_player_coins(self, cli_obj):
         """
         השרת קורא לפעולה הזו כששחקן מת.
@@ -936,7 +790,7 @@ class HoldPlayersData:
 
     def get_world_delta(self):
         with self.game_lock:
-            remove_set = set(self.to_remove)  # o(1)
+            remove_set = set(self.to_remove)
             final_add = [item for item in self.to_add if item not in remove_set]
             delta = {
                 "add": final_add,
