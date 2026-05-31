@@ -6,7 +6,7 @@ import pygame
 import threading
 import socket
 from msg_by_size_snake import TransportData
-import json
+import sys
 import os
 import time
 import math
@@ -401,16 +401,28 @@ class ClientThread(threading.Thread):
             while self.running:
                 data_rec = self.recv_from_server()
                 if not data_rec:
+                    self.handle_server_disconnect()
                     break
                 data_recv = msgpack.unpackb(data_rec, raw=False)
-                print("-------------------\nrecved:", data_recv, "\n----------------------")
+                # print("-------------------\nrecved:", data_recv, "\n----------------------")
                 cmd = data_recv.get("cmd")
                 payload = data_recv.get("payload", {})
                 if cmd in self.cmd_dict:
                     self.cmd_dict[cmd](payload)
+        except socket.error as e:
+            self.handle_server_disconnect()
+            print(e)
         except Exception as e:
+            self.handle_server_disconnect()
             print(e)
         self.close()
+
+    def handle_server_disconnect(self):
+        if self.running:
+            print("Server disconnected abruptly!")
+            self.alive = False
+            self.running = False
+            self.state = STATE_HANDSHAKE
 
     def build_message(self, cmd, **payload):
         return {
@@ -424,9 +436,9 @@ class ClientThread(threading.Thread):
     def send_to_server(self, data_dict):
         try:
             with self.lock:
-                print("--------------------\nRaw : ", data_dict)
+                # print("--------------------\nRaw : ", data_dict)
                 data_bytes = msgpack.packb(data_dict)
-                print("Sent TCP: ", data_bytes, "\n-------------------")
+                # print("Sent TCP: ", data_bytes, "\n-------------------")
                 self.transport_data.send_with_size(data_bytes)
         except Exception as e:
             print("Send failed:", e)
@@ -439,8 +451,8 @@ class ClientThread(threading.Thread):
                     data_bytes = self.encrypt_data_with_AES(data_bytes)
                 server_address = (self.ip, self.UDP_port)
                 self.UDP_sock.sendto(data_bytes, server_address)
-                print("--------------------\nsent UDP", data_bytes)
-                print("RAW: ", data_dict, "\n----------------------")
+                # print("--------------------\nsent UDP", data_bytes)
+                # print("RAW: ", data_dict, "\n----------------------")
         except socket.error as e:
             print(e)
         except Exception as e:
@@ -473,7 +485,7 @@ class ClientThread(threading.Thread):
 
     def died_f(self, payload):
         with self.lock:
-            print("died in TCP")
+            # print("died in TCP")
             died = payload.get("died", [])
             for p_id_str in died:
 
@@ -544,7 +556,7 @@ class ClientThread(threading.Thread):
 
             # tcp msg
             if is_full_sync:
-                print("update with tcp")
+                # print("update with tcp")
                 self.asking_server_for_sync = False
                 # update, so we reset grid
                 self.grid = {}
@@ -596,7 +608,7 @@ class ClientThread(threading.Thread):
             if "usernames" in delta:
                 self.tid_to_username = delta.get("usernames")
                 self.known_usernames.update(self.tid_to_username)
-                print("udp,", self.tid_to_username)
+                # print("udp,", self.tid_to_username)
             if "length" in delta:
                 self.snake_lengths = delta.get("length")
             if "players_color" in delta:
@@ -623,7 +635,7 @@ class ClientThread(threading.Thread):
                 self.grid.pop((x, y, ticket), None)
             else:
                 # this is unusual moment --> can't happen but still for the case it is
-                print("TICKET = NONE")
+                # print("TICKET = NONE")
                 keys_to_remove = [k for k in self.grid.keys() if k[0] == x and k[1] == y]
                 for k in keys_to_remove:
                     self.grid.pop(k, None)
@@ -734,7 +746,7 @@ class ClientThread(threading.Thread):
             print(f"Buy successful! Coins left: {self.my_amount_of_coins}")
 
         if subject == "init":
-            print("init arrived!")
+            # print("init arrived!")
             self.got_init = True
 
     def error_f(self, payload):
@@ -778,8 +790,8 @@ class ClientThread(threading.Thread):
         try:
             if self.state in [STATE_LOBBY, STATE_GAME]:
                 self.send_to_server(self.build_message("LOGOUT", remember=True))
-                print("LOGOUT SUCCESS!")
-        except Exception:
+                # print("LOGOUT SUCCESS!")
+        except Exception as e:
             pass
         # ------------------------------------------
         try:
@@ -1363,7 +1375,7 @@ def home_screen(screen, client):
     flying_coins = []
     TARGET_X, TARGET_Y = 20.0, 30.0
     # coins animation prep
-    while waiting_for_user:
+    while waiting_for_user and client.alive:
         screen.fill(COLOR_BG)
         # screen animation
         for s in bg_snakes:
@@ -1659,7 +1671,7 @@ def sign_in_screen(screen, client_obj):
     bg_snakes = [BgSnake(600, 600) for _ in range(8)]
     rem_box = CheckBox(150, 340)
 
-    while True:
+    while client_obj.alive:
         screen.fill(COLOR_BG)
         # screen animation
         for s in bg_snakes:
@@ -1980,6 +1992,10 @@ def pre_login_screen(screen, remembered_user, client_obj):
 
 
 def main():
+    if len(sys.argv) == 2:
+        ip = sys.argv[1]
+    else:
+        ip = "127.0.0.1"
     global COLOR_PACK
     screen = pygame.display.set_mode((600, 600))
     pygame.display.set_caption("SNAKE ONLINE - Sign in")
@@ -1989,7 +2005,7 @@ def main():
 
     while True:
         # stage 1: key change
-        client_obj = ClientThread()
+        client_obj = ClientThread(ip=ip)
         client_obj.start()
         # wait till exchange end
         while client_obj.state == STATE_HANDSHAKE and client_obj.is_alive():
@@ -2059,7 +2075,7 @@ def main():
                 if client_obj.state == STATE_LOBBY:
                     res = home_screen(screen, client_obj)
                     if res is None:  # LOGOUT pressed
-                        print(res, "sign of gone")
+                        # print(res, "sign of gone")
                         break
                 # stage 5: game
                 elif client_obj.state == STATE_GAME:

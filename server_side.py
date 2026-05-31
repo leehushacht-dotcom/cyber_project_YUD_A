@@ -158,7 +158,7 @@ class HandleClientUDP(threading.Thread):
         while not self.server.stop_event.is_set():
             try:
                 data, addr = self.udp_sock.recvfrom(UDP_RECV_SIZE)
-                print(f"CLASS:udp | PROC:run | data:{data} | addr:{addr}")
+                # print(f"CLASS:udp | PROC:run | data:{data} | addr:{addr}")
                 if not data:
                     continue
                 is_init_packet = False
@@ -166,7 +166,7 @@ class HandleClientUDP(threading.Thread):
                     # INIT sent with no encrypt, so we need to check this
                     temp_data = msgpack.unpackb(data, raw=False)
                     if temp_data.get("cmd") == "INIT":
-                        print(f"CLASS:udp | PROC:run | info:got INIT")
+                        # print(f"CLASS:udp | PROC:run | info:got INIT")
                         is_init_packet = True
                 except:
                     pass
@@ -265,7 +265,7 @@ class HandleClientUDP(threading.Thread):
                 print(f"Skipping message for disconnected client: {tid}")
 
     def init_f(self, payload, addr):
-        print(f"CLASS:udp | PROC:init_f | info:GOT INIT")
+        # print(f"CLASS:udp | PROC:init_f | info:GOT INIT")
         p_tid = int(payload.get("tid"))
         client_obj = self.server.get_tcp_client_obj(str(p_tid))
         if not client_obj:
@@ -281,7 +281,7 @@ class HandleClientUDP(threading.Thread):
                 self.udp_clients[str_tid] = addr
                 self.server.UDP_async_msg.add_new_player(str_tid, addr)
                 self.tid_to_ID[str_tid] = -1
-                print(f"Player {str_tid} registered UDP address: {addr}")
+                # print(f"Player {str_tid} registered UDP address: {addr}")
                 # need to send ack back
                 msg = self.build_message("ACK", subject="init")
                 self.server.async_msg.put_msg_by_user(msg, int(p_tid))
@@ -300,12 +300,13 @@ class HandleClientUDP(threading.Thread):
                 self.server.UDP_async_msg.add_new_player(str(p_tid), addr)
                 self.tid_to_ID[str(p_tid)] = -1
             if msg_id > self.tid_to_ID[str(p_tid)]:
-                print("new id")
+                # print("new id")
                 self.tid_to_ID[str(p_tid)] = msg_id
                 is_new_msg = True
 
             else:
-                print("old id")
+                pass
+                # print("old id")
         if is_new_msg:
             player_obj = self.server.players_manager.get_cli_obj(str(p_tid))
             if player_obj:
@@ -368,12 +369,12 @@ class Client(threading.Thread):
                 if not data:
                     print(f"CLASS:client | PROC:run | info:recv 0 data")
                     break
-                print(f"CLASS:client | PROC:run | data before:{data}")
+                # print(f"CLASS:client | PROC:run | data before:{data}")
                 try:
                     data = msgpack.unpackb(data, raw=False)
                 except Exception:
                     continue
-                print(f"CLASS:client | PROC:run | data after:{data}")
+                # print(f"CLASS:client | PROC:run | data after:{data}")
                 command = data.get("cmd")
                 if command:
                     if command in ALLOWED_COMMANDS[self.state]:
@@ -456,7 +457,7 @@ class Client(threading.Thread):
         user_name = payload.get("user")
         token = payload.get("token")
         device_id = payload.get("device_id")
-        print(f"CLASS:client | PROC:token_login_f | proc got --> {device_id}")
+        # print(f"CLASS:client | PROC:token_login_f | proc got --> {device_id}")
         is_success = self.server.user_manager.check_auto_login(user_name, token, device_id)
         if is_success:
             # login succeed
@@ -464,7 +465,7 @@ class Client(threading.Thread):
             # coins add
             self.username = user_name
             total_coins = self.server.user_manager.get_coins(user_name)
-            print(f"CLASS:client | PROC:token_login_f | total coins -- > {total_coins}")
+            # print(f"CLASS:client | PROC:token_login_f | total coins -- > {total_coins}")
 
             # here send also shop and owning
             i_own = self.server.user_manager.get_user_color_collection(self.username)
@@ -493,13 +494,13 @@ class Client(threading.Thread):
             if remember_me:
                 token_to_send = secrets.token_hex(32)
                 self.server.user_manager.update_user_token(user_name, token_to_send, device_id)
-                print(f"User {user_name} asked to be remembered. Token generated.")
+                # print(f"User {user_name} asked to be remembered. Token generated.")
             else:
                 # if didn't want to be remembered we update it
                 self.server.user_manager.update_user_token(user_name, None, None)
                 print(f"User {user_name} logged in without persistence.")
             total_coins = self.server.user_manager.get_coins(user_name)
-            print(f"CLASS:client | PROC:login_f | total coins -- > {total_coins}")
+            # print(f"CLASS:client | PROC:login_f | total coins -- > {total_coins}")
             # here send also shop and owning
             i_own = self.server.user_manager.get_user_color_collection(self.username)
             msg = self.build_message("ACK", subject="login", UDPport=self.server.UDP_port1, total_coins=total_coins,
@@ -520,7 +521,7 @@ class Client(threading.Thread):
         # ------
         is_registered = self.server.user_manager.register_user(user_name, password, self.server.pepper)
         if is_registered:
-            print(f"CLASS:client | PROC:sign_up_f | signup succeed")
+            # print(f"CLASS:client | PROC:sign_up_f | signup succeed")
 
             self.state = STATE_LOBBY
             # coins add
@@ -529,11 +530,11 @@ class Client(threading.Thread):
             if remember_me:
                 token_to_send = secrets.token_hex(32)
                 self.server.user_manager.update_user_token(user_name, token_to_send, device_id)
-                print(f"User {user_name} asked to be remembered. Token generated.")
+                # print(f"User {user_name} asked to be remembered. Token generated.")
             else:
                 # if didn't want to be remembered we update it
                 self.server.user_manager.update_user_token(user_name, None, None)
-                print(f"User {user_name} logged in without persistence.")
+                # print(f"User {user_name} logged in without persistence.")
 
             i_own = self.server.user_manager.get_user_color_collection(self.username)
             msg = self.build_message("ACK", subject="signup", UDPport=self.server.UDP_port1, total_coins=0,
@@ -545,7 +546,7 @@ class Client(threading.Thread):
             # send ack --> fail
 
     def color_f(self, payload):
-        print(f"CLASS:client | PROC:color | info:in color_f!")
+        # print(f"CLASS:client | PROC:color | info:in color_f!")
 
         self.snake_color = payload.get("color")
         self.server.players_manager.set_snake_color_locked(str(self.tid), self.snake_color)
@@ -565,7 +566,7 @@ class Client(threading.Thread):
             self.state = STATE_GAME
             self.server.async_msg.player_ready_for_game(int(self.tid))
             self.server.UDP_async_msg.player_ready_for_game(str(self.tid))
-        print("CLASS: client | PROC:send_new_board_f | info: send NEW_BOARD!")
+        # print("CLASS: client | PROC:send_new_board_f | info: send NEW_BOARD!")
 
     def key_f(self, payload):
         key_got = base64.b64decode(payload.get("key"))
@@ -574,13 +575,14 @@ class Client(threading.Thread):
             print(f"CLASS:client | PROC:key_f | info:failed")
             self.send_error("009")
         else:
-            print(f"CLASS:client | PROC:key_f | info:success")
+            # print(f"CLASS:client | PROC:key_f | info:success")
             self.state = STATE_AUTH
             self.transport_data.key = key_got
             self.server.async_msg.put_msg_by_user(self.build_message("ID", tid=str(self.tid)), int(self.tid))
 
     def leave_game_f(self, payload):
         print(f"Player {self.tid} finished death animation. Moving to LOBBY.")
+        self.server.user_manager.save_users()
         self.state = STATE_LOBBY
         self.server.async_msg.not_ready(int(self.tid))
         self.server.UDP_async_msg.not_ready(str(self.tid))
@@ -592,7 +594,7 @@ class Client(threading.Thread):
 
     def send_with_sign(self, data_dict):
         try:
-            print(f"CLASS:client | PROC:send_with_sign | state:{self.state} | data:{data_dict}")
+            # print(f"CLASS:client | PROC:send_with_sign | state:{self.state} | data:{data_dict}")
             data_bytes = msgpack.packb(data_dict)
             self.send_with_size(data_bytes)
         except Exception as e:
@@ -750,10 +752,10 @@ class Server:
                             cli_money = self.players_manager.pop_player_coins(dead_client)
                             if cli_money > 0 and dead_client.username:
                                 self.user_manager.add_coins(dead_client.username, cli_money)
-                                print(f"Saved {cli_money} coins for {dead_client.username}")
+                                # print(f"Saved {cli_money} coins for {dead_client.username}")
                             total_money = self.user_manager.get_coins(
                                 dead_client.username) if dead_client.username else 0
-                            print(f"CLASS:server | PROC:game_loop | total_money:{total_money} | dead cli:{dead_client.username}")
+                            # print(f"CLASS:server | PROC:game_loop | total_money:{total_money} | dead cli:{dead_client.username}")
                             self.send_update_coins(p_id_str, total_money)
                             #  coins add
                             dead_client.state = STATE_LOBBY
@@ -761,7 +763,7 @@ class Server:
                             dead_client.snake_color = None
                             if p_id_str in self.handle_client_udp_obj.tid_to_ID:
                                 self.handle_client_udp_obj.tid_to_ID[p_id_str] = -1
-                            print(f"Server updated state for dead player {p_id_str} back to LOBBY")
+                            # print(f"Server updated state for dead player {p_id_str} back to LOBBY")
                 udp_board_msg = self.build_message("BOARD", delta=delta, ID=tick_id, history=udp_history)
                 self.UDP_async_msg.put_msg_to_all(udp_board_msg)
 

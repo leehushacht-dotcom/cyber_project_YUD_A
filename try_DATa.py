@@ -280,7 +280,6 @@ class HoldPlayersData:
                     self._object_add(pos[0], pos[1], SNAKE_HEAD, cli_obj, 1)
                     self.changed = True
                     if bot:
-                        print("is bot")
                         self.in_game_bots.append(cli_obj)
                         self.newest_bot = int(cli_obj.tid)
                         self.tid_to_usernames[str(cli_obj.tid)] = cli_obj.username
@@ -326,18 +325,18 @@ class HoldPlayersData:
 
     def move_all_players(self, server_tick):
         self.cur_tick = server_tick
-        print(self.fruits_num, "|", self.coins_num)  # delete it later
+        # print(self.fruits_num, "|", self.coins_num)
 
         self.update_bots(server_tick)
         with self.game_lock:
             if self.board_is_full_A:
                 if random.random() > 0.25:
-                    print("cleaning apples!")
+                    # print("cleaning apples!")
                     self._cleanup_unseen_apples_fast()
                     self.board_is_full_A = False
             if self.board_is_full_C:
                 if random.random() > 0.25:
-                    print("cleaning coins!")
+                    # print("cleaning coins!")
                     self._clean_old_coins()
                     self.board_is_full_C = False
             # who moves this tick
@@ -419,11 +418,10 @@ class HoldPlayersData:
                             player.is_ready = True
                         self.changed = True
                     if not bot:
-                        print("send NEW_BOARD from file")
+                        # print("send NEW_BOARD from file")
                         player.need_new_board = True
                         return True, player
                 else:
-                    print("wait!")
                     with self.users_lock:
                         self.waiting_players.append((player, bot))
         return False, None
@@ -452,7 +450,8 @@ class HoldPlayersData:
         for px, py, ticket in apples_to_delete:
             self._remove_exist_apple(px, py, ticket)
         if apples_to_delete:
-            print(f"{len(apples_to_delete)} apples cleanly scattered-removed!")
+            pass
+            # print(f"{len(apples_to_delete)} apples cleanly scattered-removed!")
 
     def _clean_old_coins(self, amount=5):
         visible_cells = set()
