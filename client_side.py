@@ -99,6 +99,7 @@ EWOULDBLOCK = 10035
 COLOR_PACK = [(255, 255, 255)]
 
 ERROR_DICT = {
+    "002": "invalid format",
     "003": "Login failed",
     "004": "Signup failed",
     "005": "Illegal state: action not allowed right now",

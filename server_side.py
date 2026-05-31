@@ -104,7 +104,7 @@ RECV_SIZE = 1024
 UDP_RECV_SIZE = 65535
 EWOULDBLOCK = 10035
 BROADCAST_TIME = 0.05
-BOT_AMOUNT = 8
+BOT_AMOUNT = 8  # max = 8, if more need more names
 AUTO_TCP_UPDATE = False
 
 STATE_HANDSHAKE = 0
@@ -127,6 +127,7 @@ ALLOWED_UDP = {
 BOTS_NAMES = ["bob", "david", "rahel", "vladimir", "yona", "john", "jordan", "guy"]
 
 ERROR_DICT = {
+    "002": "invalid format",
     "003": "login failed",
     "004": "signup failed",
     "005": "Illegal state: action not allowed right now",
