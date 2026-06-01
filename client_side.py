@@ -106,7 +106,8 @@ ERROR_DICT = {
     "006": "Purchase has failed",
     "007": "Auto login failed",
     "008": "Passwords don't match!",
-    "009": "key not recognized"
+    "009": "key not recognized",
+    "011": "User is already logged in!"
 }
 
 # -------- LOGIN SCREEN -------- #
@@ -303,6 +304,7 @@ class ClientThreadUDP(threading.Thread):
                 if not data:
                     continue
                 data_dict = msgpack.unpackb(data, raw=False)
+                # print(f"| udp:{self.cli_obj.last_board_id}|{data}")
                 command = data_dict.get("cmd")
                 payload = data_dict.get("payload", {})
                 if command in self.cmd_dict:
@@ -545,8 +547,9 @@ class ClientThread(threading.Thread):
                     else:
                         # can't recover, the gap is too big, so we need full sync from server!
                         print(f"Packet loss! Expected {self.last_board_id + 1}, got {tick_id}. Requesting SYNC.")
-                        self.asking_server_for_sync = True
-                        self.send_to_server(self.build_message("SYNC_ME"))
+                        if self.state == STATE_GAME:
+                            self.asking_server_for_sync = True
+                            self.send_to_server(self.build_message("SYNC_ME"))
                         return
 
             # ----------------------------
@@ -593,9 +596,9 @@ class ClientThread(threading.Thread):
                                     # can't recover -> ask for sync!
                                     print(f"Packet loss during Fast-Forward! Expected {self.last_board_id + 1},"
                                           f" got {p_id}. Requesting SYNC again.")
-                                    self.asking_server_for_sync = True
-                                    self.pending_udp_updates.clear()
-                                    self.send_to_server(self.build_message("SYNC_ME"))
+                                    if self.state == STATE_GAME:
+                                        self.asking_server_for_sync = True
+                                        self.send_to_server(self.build_message("SYNC_ME"))
                                     return
                                     # ----------------------------------------------
 
@@ -756,6 +759,11 @@ class ClientThread(threading.Thread):
         print(num, ": ", info)
         self.error_num = num
         self.error_time = time.time()
+        if num == "005":
+            if self.state == STATE_GAME:
+                print("Desync detected. Exiting gracefully to lobby...")
+                self.alive = False
+                return
 
     def prepare_for_new_game(self):
         self.state = STATE_LOBBY

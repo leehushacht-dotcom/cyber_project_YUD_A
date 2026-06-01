@@ -133,7 +133,8 @@ ERROR_DICT = {
     "005": "Illegal state: action not allowed right now",
     "006": "purchase has failed",
     "007": "auto login failed",
-    "009": "key not recognized"
+    "009": "key not recognized",
+    "011": "User is already logged in!"
 }
 
 
@@ -386,8 +387,14 @@ class Client(threading.Thread):
                         else:
                             self.send_error("002")
                     else:
-                        print(f"[Security] Blocked {command} for client {self.tid} in state {self.state}")
-                        self.send_error("005")
+                        if self.state == STATE_LOBBY and command in ["SYNC_ME", "DIR", "LEAVE_GAME"]:
+                            pass
+                        else:
+                            print(f"[Security] Blocked {command} for client {self.tid} in state {self.state}")
+                            self.send_error("005")
+
+                        # print(f"[Security] Blocked {command} for client {self.tid} in state {self.state}")
+                        # self.send_error("005")
                 else:
                     self.send_error("002")
             except socket.error as err:
@@ -456,6 +463,10 @@ class Client(threading.Thread):
 
     def token_login_f(self, payload):
         user_name = payload.get("user")
+        already = self.is_user_already_online(user_name)
+        if already:
+            self.send_error("011")
+            return
         token = payload.get("token")
         device_id = payload.get("device_id")
         # print(f"CLASS:client | PROC:token_login_f | proc got --> {device_id}")
@@ -480,8 +491,18 @@ class Client(threading.Thread):
             self.send_error("007")
             # send ack --> fail
 
+    def is_user_already_online(self, check_username):
+        for cli in list(self.server.client_obj_lst):
+            if cli.username == check_username:
+                return True
+        return False
+
     def login_f(self, payload):
         user_name = payload.get("email")
+        already = self.is_user_already_online(user_name)
+        if already:
+            self.send_error("011")
+            return
         password = payload.get("password")
         device_id = payload.get("device_id")
         remember_me = payload.get("remember_me")
