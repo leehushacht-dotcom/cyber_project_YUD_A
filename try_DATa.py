@@ -411,7 +411,7 @@ class HoldPlayersData:
                         self._object_add(pos[0], pos[1], SNAKE_HEAD, player, 1)
                         if bot:
                             self.in_game_bots.append(player)
-                            self.newest_bot = int(player.tid)
+                            #self.newest_bot = int(player.tid)
                             self.tid_to_usernames[str(player.tid)] = player.username
                         else:
                             self.tid_to_usernames[str(player.tid)] = player.username
